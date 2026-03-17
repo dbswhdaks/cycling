@@ -47,3 +47,8 @@ app.*.map.json
 # Keystore (보안 - 절대 커밋 금지)
 *.jks
 *.keystore
+
+# 환경변수 (API 키, 토큰 - 절대 커밋 금지)
+.env
+.env.local
+.env.*.local
