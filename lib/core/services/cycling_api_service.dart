@@ -159,6 +159,7 @@ class CyclingApiService {
         ..._baseParams(),
         'meet': meet,
         'stnd_yr': date.substring(0, 4),
+        'stnd_de': date,
         if (rcNo != null) 'rcNo': rcNo,
       };
 
@@ -167,7 +168,17 @@ class CyclingApiService {
       if (error != null) return ApiResult.failure(error);
 
       final items = _extractItems(res.data);
-      final results = items.map((e) => _parseRaceResult(Map<String, dynamic>.from(e as Map))).toList();
+      final all = items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+
+      final targetYmd = _toApiDateFormat(date);
+      final filtered = all.where((m) {
+        final ymd = m['race_ymd']?.toString() ?? m['race_de']?.toString() ?? '';
+        if (ymd.isEmpty) return true;
+        return ymd == targetYmd || ymd == date || ymd.replaceAll('.', '') == date;
+      }).toList();
+
+      final source = filtered.isNotEmpty ? filtered : all;
+      final results = source.map((e) => _parseRaceResult(e)).toList();
       return ApiResult.success(results);
     } on DioException catch (e) {
       return ApiResult.failure(_dioErrorMsg(e));
@@ -234,7 +245,7 @@ class CyclingApiService {
     }
   }
 
-  // ─────────────────────────── 선수 상세 (캐시 기반) ───────────────────────────
+  // ─────────────────────────── 선수 상세 (연간 전체 기록 집계) ───────────────────────────
 
   Future<ApiResult<Map<String, dynamic>>> fetchRacerDetail({
     required String riderId,
@@ -262,6 +273,39 @@ class CyclingApiService {
     }
   }
 
+  /// 선수의 연간 전체 출전 기록을 집계
+  Future<ApiResult<List<Map<String, dynamic>>>> fetchRacerAllRecords({
+    required String riderName,
+    int? meet,
+    String? date,
+  }) async {
+    try {
+      if (meet == null || date == null) {
+        return const ApiResult.failure('경기장·날짜 정보 필요');
+      }
+      final year = int.parse(date.substring(0, 4));
+      final allItems = await fetchAllOrganData(meet: meet, year: year);
+
+      final normalized = riderName.trim().replaceAll(' ', '');
+      final records = allItems.where((m) {
+        final nm = (m['racer_nm']?.toString() ?? '').trim().replaceAll(' ', '');
+        return nm == normalized;
+      }).toList();
+
+      records.sort((a, b) {
+        final da = a['race_ymd']?.toString() ?? '';
+        final db = b['race_ymd']?.toString() ?? '';
+        return da.compareTo(db);
+      });
+
+      return ApiResult.success(records);
+    } on DioException catch (e) {
+      return ApiResult.failure(_dioErrorMsg(e));
+    } catch (e) {
+      return ApiResult.failure('파싱 오류: $e');
+    }
+  }
+
   // ─────────────────────────── 경주 순위 ───────────────────────────
 
   Future<ApiResult<List<Map<String, dynamic>>>> fetchRaceRank({
@@ -274,6 +318,7 @@ class CyclingApiService {
         ..._baseParams(),
         'meet': meet,
         'stnd_yr': date.substring(0, 4),
+        'stnd_de': date,
         'rcNo': rcNo,
       };
 
@@ -283,7 +328,15 @@ class CyclingApiService {
 
       final items = _extractItems(res.data);
       final ranks = items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-      return ApiResult.success(ranks);
+
+      final targetYmd = _toApiDateFormat(date);
+      final filtered = ranks.where((r) {
+        final ymd = r['race_ymd']?.toString() ?? r['race_de']?.toString() ?? '';
+        if (ymd.isEmpty) return true;
+        return ymd == targetYmd || ymd == date || ymd.replaceAll('.', '') == date;
+      }).toList();
+
+      return ApiResult.success(filtered.isNotEmpty ? filtered : ranks);
     } on DioException catch (e) {
       return ApiResult.failure(_dioErrorMsg(e));
     } catch (e) {

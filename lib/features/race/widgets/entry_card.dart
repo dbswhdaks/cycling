@@ -136,7 +136,7 @@ class EntryCard extends ConsumerWidget {
               ),
               const SizedBox(height: 2),
               Text(
-                '최근3 ${entry.recent3Wins}승',
+                '직전 우승 ${entry.recent3Wins}회',
                 style: theme.textTheme.bodySmall,
               ),
             ],

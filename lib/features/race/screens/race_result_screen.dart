@@ -28,6 +28,20 @@ class RaceResultScreen extends ConsumerWidget {
     return date;
   }
 
+  bool get _isNotYetRace {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    if (date.length < 8) return false;
+    final year = int.tryParse(date.substring(0, 4)) ?? 0;
+    final month = int.tryParse(date.substring(4, 6)) ?? 0;
+    final day = int.tryParse(date.substring(6, 8)) ?? 0;
+    final raceDate = DateTime(year, month, day);
+    return !raceDate.isBefore(today);
+  }
+
+  static bool _isNotYetError(Object error) =>
+      error.toString().contains('NOT_YET');
+
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final resultAsync = ref.watch(raceResultProvider((
@@ -56,6 +70,9 @@ class RaceResultScreen extends ConsumerWidget {
       raceNo: raceNo,
     )));
 
+    final isNotYet = _isNotYetRace
+        || (_isNotYetError(rankAsync.error ?? '') && _isNotYetError(resultAsync.error ?? ''));
+
     return Scaffold(
       body: CustomScrollView(
         slivers: [
@@ -66,46 +83,49 @@ class RaceResultScreen extends ConsumerWidget {
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  _buildDateHeader(context),
+                  _buildDateHeader(context, isNotYet: isNotYet),
                   const SizedBox(height: 24),
-                  rankAsync.when(
-                    data: (ranks) {
-                      final unified = _unifiedResult(ranks, resultAsync.valueOrNull);
-                      return Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildPodium(context, unified),
-                          const SizedBox(height: 28),
-                          _buildComparisonSection(
-                            context, unified, predictionAsync, entriesAsync,
-                          ),
-                          const SizedBox(height: 28),
-                          _buildOddsResult(context, unified, oddsAsync),
-                          const SizedBox(height: 28),
-                          _buildRankingList(context, ranks),
-                        ],
-                      );
-                    },
-                    loading: () => _buildLoadingBox(400),
-                    error: (_, __) => resultAsync.when(
-                      data: (result) => Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          _buildPodium(context, result),
-                          const SizedBox(height: 28),
-                          _buildComparisonSection(
-                            context, result, predictionAsync, entriesAsync,
-                          ),
-                          const SizedBox(height: 28),
-                          _buildOddsResult(context, result, oddsAsync),
-                          const SizedBox(height: 28),
-                          _buildRankingFromResult(context, result),
-                        ],
+                  if (isNotYet)
+                    _buildNotYetSection(context)
+                  else
+                    rankAsync.when(
+                      data: (ranks) {
+                        final unified = _unifiedResult(ranks, resultAsync.valueOrNull);
+                        return Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildPodium(context, unified),
+                            const SizedBox(height: 28),
+                            _buildComparisonSection(
+                              context, unified, predictionAsync, entriesAsync,
+                            ),
+                            const SizedBox(height: 28),
+                            _buildOddsResult(context, unified, oddsAsync),
+                            const SizedBox(height: 28),
+                            _buildRankingList(context, ranks),
+                          ],
+                        );
+                      },
+                      loading: () => _buildLoadingBox(400),
+                      error: (_, __) => resultAsync.when(
+                        data: (result) => Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            _buildPodium(context, result),
+                            const SizedBox(height: 28),
+                            _buildComparisonSection(
+                              context, result, predictionAsync, entriesAsync,
+                            ),
+                            const SizedBox(height: 28),
+                            _buildOddsResult(context, result, oddsAsync),
+                            const SizedBox(height: 28),
+                            _buildRankingFromResult(context, result),
+                          ],
+                        ),
+                        loading: () => _buildLoadingBox(200),
+                        error: (_, __) => _buildErrorBox(context, '결과를 불러올 수 없습니다'),
                       ),
-                      loading: () => _buildLoadingBox(200),
-                      error: (_, __) => _buildErrorBox(context, '결과를 불러올 수 없습니다'),
                     ),
-                  ),
                   const SizedBox(height: 24),
                   _buildDisclaimer(context),
                   const SizedBox(height: 24),
@@ -169,8 +189,10 @@ class RaceResultScreen extends ConsumerWidget {
     );
   }
 
-  Widget _buildDateHeader(BuildContext context) {
+  Widget _buildDateHeader(BuildContext context, {bool isNotYet = false}) {
     final theme = Theme.of(context);
+    final statusColor = isNotYet ? const Color(0xFFF59E0B) : const Color(0xFF22C55E);
+    final statusText = isNotYet ? '경기 전' : '확정';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
@@ -192,15 +214,80 @@ class RaceResultScreen extends ConsumerWidget {
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             decoration: BoxDecoration(
-              color: const Color(0xFF22C55E).withValues(alpha: 0.15),
+              color: statusColor.withValues(alpha: 0.15),
               borderRadius: BorderRadius.circular(8),
             ),
-            child: const Text(
-              '확정',
+            child: Text(
+              statusText,
               style: TextStyle(
-                color: Color(0xFF22C55E),
+                color: statusColor,
                 fontSize: 12,
                 fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildNotYetSection(BuildContext context) {
+    final theme = Theme.of(context);
+    final isDark = theme.brightness == Brightness.dark;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24),
+      decoration: BoxDecoration(
+        color: isDark
+            ? const Color(0xFFF59E0B).withValues(alpha: 0.06)
+            : const Color(0xFFF59E0B).withValues(alpha: 0.04),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: const Color(0xFFF59E0B).withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        children: [
+          Container(
+            width: 72,
+            height: 72,
+            decoration: BoxDecoration(
+              color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
+              shape: BoxShape.circle,
+            ),
+            child: const Icon(
+              Icons.schedule_rounded,
+              size: 36,
+              color: Color(0xFFF59E0B),
+            ),
+          ),
+          const SizedBox(height: 20),
+          Text(
+            '아직 경기가 진행되지 않았습니다',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '$displayDate 경기는 아직 시작 전이므로\n결과를 확인할 수 없습니다.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 24),
+          FilledButton.icon(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.arrow_back_rounded, size: 18),
+            label: const Text('돌아가기'),
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFFF59E0B),
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
               ),
             ),
           ),
@@ -338,25 +425,24 @@ class RaceResultScreen extends ConsumerWidget {
     final s = result.secondNo;
     final t = result.thirdNo;
 
-    final fLabel = f > 0 ? '$f' : '?';
-    final sLabel = s > 0 ? '$s' : '?';
-    final tLabel = t > 0 ? '$t' : '?';
+    final fName = result.first.isNotEmpty ? result.first : '';
+    final sName = result.second.isNotEmpty ? result.second : '';
+    final tName = result.third.isNotEmpty ? result.third : '';
+
+    String num(int no) => no > 0 ? '$no' : '?';
 
     // 단승
     final winOdds = result.winOdds > 0 ? result.winOdds : odds?.win[f];
 
     // 복승
-    final placeKey1 = '$f-$s';
-    final placeKey2 = '$s-$f';
     final placeOdds = result.placeOdds > 0
         ? result.placeOdds
-        : (odds?.place[placeKey1] ?? odds?.place[placeKey2]);
+        : (odds?.place['$f-$s'] ?? odds?.place['$s-$f']);
 
     // 쌍승
-    final quinKey = '$f-$s';
     final quinOdds = result.quinellaOdds > 0
         ? result.quinellaOdds
-        : odds?.quinella[quinKey];
+        : (odds?.quinella['$f-$s'] ?? odds?.quinella['$s-$f']);
 
     // 삼복승
     double? trioOdds;
@@ -370,12 +456,12 @@ class RaceResultScreen extends ConsumerWidget {
     // 삼쌍승
     final triOdds = odds?.trifecta['$f-$s-$t'];
 
-    final items = <({String type, String combo, double? odds, Color color, String desc})>[
-      (type: '단승', combo: '$fLabel번', odds: winOdds, color: const Color(0xFFEF4444), desc: '1등 맞추기'),
-      (type: '복승', combo: '$fLabel-$sLabel', odds: placeOdds, color: const Color(0xFF3B82F6), desc: '1·2등 순서 무관'),
-      (type: '쌍승', combo: '$fLabel→$sLabel', odds: quinOdds, color: const Color(0xFF8B5CF6), desc: '1·2등 순서 맞추기'),
-      (type: '삼복승', combo: '$fLabel-$sLabel-$tLabel', odds: trioOdds, color: const Color(0xFFF59E0B), desc: '1·2·3등 순서 무관'),
-      (type: '삼쌍승', combo: '$fLabel→$sLabel→$tLabel', odds: triOdds, color: const Color(0xFFEC4899), desc: '1·2·3등 순서 맞추기'),
+    final items = <({String type, String combo, String detail, double? odds, Color color})>[
+      (type: '단승', combo: '${num(f)}번 $fName', detail: '1착 맞추기', odds: winOdds, color: const Color(0xFFEF4444)),
+      (type: '복승', combo: '${num(f)}-${num(s)}', detail: '1·2착 ${fName.isNotEmpty && sName.isNotEmpty ? "$fName·$sName" : "순서 무관"}', odds: placeOdds, color: const Color(0xFF3B82F6)),
+      (type: '쌍승', combo: '${num(f)}→${num(s)}', detail: '1·2착 ${fName.isNotEmpty && sName.isNotEmpty ? "$fName→$sName" : "순서 맞추기"}', odds: quinOdds, color: const Color(0xFF8B5CF6)),
+      (type: '삼복승', combo: '${num(f)}-${num(s)}-${num(t)}', detail: '1·2·3착 ${[fName, sName, tName].where((n) => n.isNotEmpty).join("·")}', odds: trioOdds, color: const Color(0xFFF59E0B)),
+      (type: '삼쌍승', combo: '${num(f)}→${num(s)}→${num(t)}', detail: '1·2·3착 ${[fName, sName, tName].where((n) => n.isNotEmpty).join("→")}', odds: triOdds, color: const Color(0xFFEC4899)),
     ];
 
     return Column(
@@ -426,7 +512,7 @@ class RaceResultScreen extends ConsumerWidget {
                       ),
                     ),
                     Text(
-                      item.desc,
+                      item.detail,
                       style: theme.textTheme.bodySmall?.copyWith(
                         color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
                         fontSize: 11,
@@ -794,17 +880,8 @@ class RaceResultScreen extends ConsumerWidget {
     const rankColors = [Color(0xFFFBBF24), Color(0xFFA3A3A3), Color(0xFFCD7F32)];
     final color = rankColors[index];
 
-    bool aiMatch = ai != null && ai.lineNo == actual.lineNo;
-    bool compMatch = comp != null && comp.lineNo == actual.lineNo;
-    bool aiInTop3 = ai != null && [actual.lineNo].contains(ai.lineNo);
-    bool compInTop3 = comp != null && [actual.lineNo].contains(comp.lineNo);
-
-    if (!aiInTop3 && ai != null) {
-      aiInTop3 = false;
-    }
-    if (!compInTop3 && comp != null) {
-      compInTop3 = false;
-    }
+    final aiMatch = ai != null && ai.lineNo == actual.lineNo;
+    final compMatch = comp != null && comp.lineNo == actual.lineNo;
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
