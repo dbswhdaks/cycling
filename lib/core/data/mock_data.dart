@@ -6,12 +6,12 @@ import '../../core/constants/api_constants.dart';
 
 /// 데모용 목업 데이터
 class MockData {
-  static const _defaultRaceCount = 5;
+  static const _defaultRaceCount = 9;
 
   static const _venueStartTimes = <int, List<String>>{
-    1: ['10:00', '10:35', '11:10', '11:45', '12:20'],
-    2: ['10:10', '10:45', '11:20', '11:55', '12:30'],
-    3: ['10:20', '10:55', '11:30', '12:05', '12:40'],
+    1: ['10:00', '10:35', '11:10', '11:45', '12:20', '13:00', '13:40', '14:20', '15:00'],
+    2: ['10:10', '10:45', '11:20', '11:55', '12:30', '13:10', '13:50', '14:30', '15:10'],
+    3: ['10:20', '10:55', '11:30', '12:05', '12:40', '13:20', '14:00', '14:40', '15:20'],
   };
 
   static List<Race> racesFor(int venue, String date, {int count = _defaultRaceCount}) {

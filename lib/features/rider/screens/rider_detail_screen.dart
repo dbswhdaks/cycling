@@ -29,6 +29,7 @@ class RiderDetailScreen extends ConsumerWidget {
   Widget _buildWithEntry(BuildContext context, WidgetRef ref, RaceEntry entry) {
     final detailAsync = ref.watch(riderDetailProvider((entry: entry, venue: venueCode)));
 
+    final fallback = RiderDetail.fromRaceEntryDetailed(entry);
     return Scaffold(
       body: CustomScrollView(
         slivers: [
@@ -36,8 +37,8 @@ class RiderDetailScreen extends ConsumerWidget {
           SliverToBoxAdapter(
             child: detailAsync.when(
               data: (detail) => _buildContent(context, detail),
-              loading: () => _buildContent(context, RiderDetail.fromRaceEntry(entry)),
-              error: (_, __) => _buildContent(context, RiderDetail.fromRaceEntry(entry)),
+              loading: () => _buildContent(context, fallback),
+              error: (_, __) => _buildContent(context, fallback),
             ),
           ),
         ],
@@ -433,18 +434,28 @@ class RiderDetailScreen extends ConsumerWidget {
     final scores = detail.recentScores;
     if (scores.isEmpty) return const SizedBox.shrink();
 
-    final maxScore = scores.reduce((a, b) => a > b ? a : b).clamp(1.0, 20.0);
-    final chartHeight = 80.0;
+    final rawMax = scores.reduce((a, b) => a > b ? a : b);
+    final rawMin = scores.reduce((a, b) => a < b ? a : b);
+    final range = rawMax - rawMin;
+    final padding = range < 0.5 ? 1.0 : range * 0.3;
+    final chartMin = rawMin - padding;
+    final chartMax = rawMax + padding * 0.5;
+    final chartRange = chartMax - chartMin;
+    const chartHeight = 80.0;
+    const labelHeight = 16.0;
+    const gap = 4.0;
 
     return SizedBox(
-      height: chartHeight + 20,
+      height: chartHeight + labelHeight * 2 + gap * 2,
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: scores.asMap().entries.map((entry) {
           final i = entry.key;
           final score = entry.value;
-          final ratio = score / maxScore;
-          final barH = (ratio * chartHeight).clamp(8.0, chartHeight);
+          final ratio = chartRange > 0
+              ? ((score - chartMin) / chartRange).clamp(0.1, 1.0)
+              : 1.0;
+          final barH = (ratio * chartHeight).clamp(12.0, chartHeight);
           final color = _scoreBarColor(score, detail.avgScore);
 
           return Expanded(
@@ -453,15 +464,18 @@ class RiderDetailScreen extends ConsumerWidget {
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.end,
                 children: [
-                  Text(
-                    score.toStringAsFixed(1),
-                    style: TextStyle(
-                      fontSize: 9,
-                      fontWeight: FontWeight.w600,
-                      color: color,
+                  SizedBox(
+                    height: labelHeight,
+                    child: Text(
+                      score.toStringAsFixed(1),
+                      style: TextStyle(
+                        fontSize: 9,
+                        fontWeight: FontWeight.w600,
+                        color: color,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: gap),
                   Container(
                     height: barH,
                     decoration: BoxDecoration(
@@ -473,12 +487,15 @@ class RiderDetailScreen extends ConsumerWidget {
                       borderRadius: BorderRadius.circular(4),
                     ),
                   ),
-                  const SizedBox(height: 4),
-                  Text(
-                    '${scores.length - i}전전',
-                    style: TextStyle(
-                      fontSize: 9,
-                      color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                  const SizedBox(height: gap),
+                  SizedBox(
+                    height: labelHeight,
+                    child: Text(
+                      '${scores.length - i}전전',
+                      style: TextStyle(
+                        fontSize: 9,
+                        color: theme.colorScheme.onSurface.withValues(alpha: 0.4),
+                      ),
                     ),
                   ),
                 ],

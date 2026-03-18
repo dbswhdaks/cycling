@@ -617,6 +617,8 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
       data: (prediction) => PredictionTab(
         prediction: prediction,
         venueName: venueName,
+        venueCode: venueCode,
+        date: date,
         raceNo: raceNo,
       ),
       loading: () => const Center(child: CircularProgressIndicator()),

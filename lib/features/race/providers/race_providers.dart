@@ -372,6 +372,7 @@ final riderDetailByIdProvider =
     riderId: params.riderId,
     riderName: params.riderId,
     grade: '-',
+    avgScore: 0,
   );
 });
 
@@ -404,7 +405,7 @@ final riderDetailProvider =
     );
   }
 
-  return RiderDetail.fromRaceEntry(entry);
+  return RiderDetail.fromRaceEntryDetailed(entry);
 });
 
 String _extractTacticFromMap(Map<String, dynamic> m) {

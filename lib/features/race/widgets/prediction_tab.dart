@@ -1,15 +1,20 @@
 import 'package:flutter/material.dart';
+import 'package:go_router/go_router.dart';
 import '../../../models/prediction.dart';
 
 class PredictionTab extends StatelessWidget {
   final RacePrediction prediction;
   final String venueName;
+  final int venueCode;
+  final String date;
   final int raceNo;
 
   const PredictionTab({
     super.key,
     required this.prediction,
     required this.venueName,
+    required this.venueCode,
+    required this.date,
     required this.raceNo,
   });
 
@@ -70,15 +75,18 @@ class PredictionTab extends StatelessWidget {
             children: [
               const Icon(Icons.auto_awesome_rounded, color: Color(0xFF8B5CF6), size: 24),
               const SizedBox(width: 10),
-              Expanded(
-                child: Text(
-                  '$venueName ${raceNo}R AI 예측',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    fontWeight: FontWeight.w700,
-                    color: const Color(0xFF8B5CF6),
-                  ),
+              Text(
+                '$venueName ${raceNo}R AI 예측',
+                style: theme.textTheme.titleMedium?.copyWith(
+                  fontWeight: FontWeight.w700,
+                  color: const Color(0xFF8B5CF6),
                 ),
               ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                 decoration: BoxDecoration(
@@ -117,7 +125,46 @@ class PredictionTab extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        _sectionTitle(theme, Icons.emoji_events_rounded, '순위 예측', const Color(0xFFFBBF24)),
+        Row(
+          children: [
+            const Icon(Icons.emoji_events_rounded, size: 20, color: Color(0xFFFBBF24)),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '순위 예측',
+                style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+              ),
+            ),
+            Builder(
+              builder: (context) => GestureDetector(
+                onTap: () => context.push('/result/$venueCode/$date/$raceNo'),
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFBBF24).withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: const Color(0xFFFBBF24).withValues(alpha: 0.3)),
+                  ),
+                  child: const Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(Icons.emoji_events_rounded, size: 16, color: Color(0xFFFBBF24)),
+                      SizedBox(width: 4),
+                      Text(
+                        '결과',
+                        style: TextStyle(
+                          color: Color(0xFFFBBF24),
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
         const SizedBox(height: 12),
         ...prediction.rankings.map((r) => _buildRankRow(theme, isDark, r)),
       ],
