@@ -82,6 +82,18 @@ class SupabaseBackupService {
     }
   }
 
+  /// 특정 날짜의 캐시 데이터를 모두 삭제 (잘못 저장된 데이터 정리)
+  Future<void> clearCacheForDate(String date) async {
+    try {
+      await _client.from('cycling_races').delete().eq('race_date', date);
+      await _client.from('cycling_entries').delete().eq('race_date', date);
+      await _client.from('cycling_predictions').delete().eq('race_date', date);
+      if (kDebugMode) debugPrint('[Supabase] $date 캐시 전체 삭제 완료');
+    } catch (e) {
+      if (kDebugMode) debugPrint('[Supabase] 캐시 삭제 실패: $e');
+    }
+  }
+
   // ─── 출주표 ───
 
   Future<void> saveEntries({

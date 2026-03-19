@@ -73,38 +73,38 @@ class PredictionTab extends StatelessWidget {
         children: [
           Row(
             children: [
-              const Icon(Icons.auto_awesome_rounded, color: Color(0xFF8B5CF6), size: 24),
-              const SizedBox(width: 10),
-              Text(
-                '$venueName ${raceNo}R AI 예측',
-                style: theme.textTheme.titleMedium?.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: const Color(0xFF8B5CF6),
+              const Icon(Icons.auto_awesome_rounded, color: Color(0xFF8B5CF6), size: 22),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '$venueName ${raceNo}R AI 예측',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                    color: const Color(0xFF8B5CF6),
+                    fontSize: 16,
+                  ),
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
+              const SizedBox(width: 6),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: confColor.withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(8),
+                  borderRadius: BorderRadius.circular(6),
                 ),
                 child: Text(
                   '신뢰도 ${conf.toStringAsFixed(0)}%',
                   style: TextStyle(
                     color: confColor,
-                    fontSize: 13,
+                    fontSize: 10,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
               ),
             ],
           ),
-          const SizedBox(height: 14),
+          const SizedBox(height: 12),
           ClipRRect(
             borderRadius: BorderRadius.circular(6),
             child: LinearProgressIndicator(

@@ -15,7 +15,7 @@ class Race {
     required this.date,
     required this.raceNo,
     required this.venueName,
-    this.distance = 2025,
+    this.distance = 0,
     String status = '예정',
     this.departureTime,
     this.racerCount = 0,

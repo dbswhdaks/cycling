@@ -1,10 +1,12 @@
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart';
 import '../constants/api_constants.dart';
 import '../network/dio_client.dart';
 import '../../models/race.dart';
 import '../../models/race_entry.dart';
 import '../../models/race_result.dart';
 import '../../models/odds.dart';
+import 'venue_scraping_service.dart';
 
 /// 공공데이터 API 호출 결과 래퍼
 class ApiResult<T> {
@@ -23,14 +25,21 @@ class ApiResult<T> {
 
 /// 경륜 공공데이터 API 서비스
 ///
-/// data.go.kr 출주표 API는 `rcDate` 파라미터를 지원하지 않는다.
-/// `stnd_yr` + `meet` 로 연도/경기장별 전체 데이터를 받은 뒤
-/// 클라이언트에서 `race_ymd` 필드로 날짜를 필터링한다.
+/// data.go.kr 출주표 API의 `meet` 파라미터가 경기장을 구분하지 못하는 경우가 있다.
+/// 따라서 3개 경기장(meet=1,2,3)을 모두 호출하여 합친 뒤,
+/// 응답 내 `meet` 필드로 경기장별 분리·캐시한다.
 class CyclingApiService {
   final Dio _dio = dioClient;
+  final VenueScrapingService _scraper = VenueScrapingService();
 
-  /// 연도+경기장별 전체 출주표 캐시 (key: "year_meet")
+  /// 경기장별 출주표 캐시 (key: "year_meet")
   final Map<String, List<Map<String, dynamic>>> _organCache = {};
+
+  /// 연도별 전체 로드 완료 플래그
+  final Set<int> _loadedYears = {};
+
+  /// 날짜별 스크래핑 데이터 캐시 (key: "date_meet")
+  final Map<String, List<Map<String, dynamic>>> _scrapeCache = {};
 
   Map<String, dynamic> _baseParams({int pageNo = 1, int numOfRows = 1000}) => {
         'serviceKey': ApiConstants.serviceKey,
@@ -39,9 +48,10 @@ class CyclingApiService {
         'resultType': 'json',
       };
 
-  // ─────────────────────────── 전체 출주표 (페이징 + 캐시) ───────────────────────────
+  // ─────────────────────────── 전체 출주표 (경기장별 개별 로드) ───────────────────────────
 
-  /// 지정 연도·경기장의 출주표 전체를 페이징하여 반환 (캐시 적용).
+  /// 지정 연도·경기장의 출주표를 반환.
+  /// 최초 호출 시 3개 경기장을 각각 개별 호출하여 **섞지 않고** 캐시한다.
   Future<List<Map<String, dynamic>>> fetchAllOrganData({
     required int meet,
     required int year,
@@ -49,7 +59,48 @@ class CyclingApiService {
     final key = '${year}_$meet';
     if (_organCache.containsKey(key)) return _organCache[key]!;
 
-    final allItems = <Map<String, dynamic>>[];
+    if (!_loadedYears.contains(year)) {
+      await _loadAllVenues(year);
+    }
+
+    return _organCache[key] ?? [];
+  }
+
+  /// 광명(meet=1)만 API로 호출하고, 창원·부산은 크롤링 전용으로 전환.
+  /// 과거 테스트에서 API가 meet 파라미터를 무시하고 동일 데이터를 반환하므로,
+  /// 불필요한 API 호출(meet=2,3)을 제거하여 로딩 속도를 개선한다.
+  Future<void> _loadAllVenues(int year) async {
+    final sw = Stopwatch()..start();
+
+    // 광명(1)만 API 호출
+    final items = await _fetchOrganPages(meet: 1, year: year);
+    _organCache['${year}_1'] = items;
+
+    // 창원·부산은 빈 배열 (날짜별 크롤링으로 대체)
+    _organCache['${year}_2'] = [];
+    _organCache['${year}_3'] = [];
+
+    if (kDebugMode) {
+      final sampleNames = items
+          .take(10)
+          .map((m) => m['racer_nm']?.toString() ?? '?')
+          .toSet()
+          .toList();
+      debugPrint('[API] 광명 API: ${items.length}건 (${sw.elapsedMilliseconds}ms), '
+          '선수 샘플=$sampleNames');
+      debugPrint('[API] 창원·부산 → 크롤링 대기');
+    }
+
+    _loadedYears.add(year);
+  }
+
+
+  /// 페이징 처리하여 출주표 원시 데이터를 반환
+  Future<List<Map<String, dynamic>>> _fetchOrganPages({
+    required int meet,
+    required int year,
+  }) async {
+    final items = <Map<String, dynamic>>[];
     int page = 1;
     int totalCount = 0;
 
@@ -66,32 +117,71 @@ class CyclingApiService {
 
       if (page == 1) {
         totalCount = _extractTotalCount(res.data);
-      }
-
-      final items = _extractItems(res.data);
-      if (items.isEmpty) break;
-
-      for (final item in items) {
-        if (item is Map) {
-          allItems.add(Map<String, dynamic>.from(item));
+        if (kDebugMode && items.isEmpty) {
+          debugPrint('[API] _fetchOrganPages(meet=$meet): totalCount=$totalCount');
         }
       }
 
-      if (allItems.length >= totalCount || page >= 20) break;
+      final extracted = _extractItems(res.data);
+      if (extracted.isEmpty) break;
+
+      for (final item in extracted) {
+        if (item is Map) {
+          items.add(Map<String, dynamic>.from(item));
+        }
+      }
+
+      if (items.length >= totalCount || page >= 20) break;
       page++;
     }
 
-    _organCache[key] = allItems;
-    return allItems;
+    if (kDebugMode && items.isNotEmpty) {
+      debugPrint('[API] _fetchOrganPages(meet=$meet): keys=${items.first.keys.toList()}');
+    }
+
+    return items;
+  }
+
+
+  /// 크롤링 진행 중 Future (중복 요청 방지)
+  Future<Map<int, List<Map<String, dynamic>>>>? _scrapingFuture;
+
+  /// 날짜별 스크래핑 데이터 조회 (캐시 활용, 중복 요청 방지).
+  Future<List<Map<String, dynamic>>> _getScrapedData(int meet, String date) async {
+    final cacheKey = '${date}_$meet';
+    if (_scrapeCache.containsKey(cacheKey)) return _scrapeCache[cacheKey]!;
+
+    try {
+      // 이미 같은 날짜를 스크래핑 중이면 기존 Future 재사용
+      _scrapingFuture ??= _scraper.scrapeRaceData(date);
+      final scraped = await _scrapingFuture!;
+      _scrapingFuture = null;
+
+      for (final entry in scraped.entries) {
+        _scrapeCache['${date}_${entry.key}'] = entry.value;
+      }
+
+      return _scrapeCache[cacheKey] ?? [];
+    } catch (e) {
+      _scrapingFuture = null;
+      if (kDebugMode) debugPrint('[Scrape] _getScrapedData 실패: $e');
+      return [];
+    }
   }
 
   /// 캐시를 무효화하여 다음 호출 시 API를 다시 요청하게 한다.
-  void invalidateOrganCache({int? meet, int? year}) {
-    if (meet != null && year != null) {
-      _organCache.remove('${year}_$meet');
+  void invalidateOrganCache({int? year}) {
+    if (year != null) {
+      for (final m in [1, 2, 3]) {
+        _organCache.remove('${year}_$m');
+      }
+      _loadedYears.remove(year);
     } else {
       _organCache.clear();
+      _loadedYears.clear();
     }
+    _scrapeCache.clear();
+    _scraper.clearCache();
   }
 
   // ─────────────────────────── 경주 목록 (출주표 기반) ───────────────────────────
@@ -107,12 +197,25 @@ class CyclingApiService {
       final allItems = await fetchAllOrganData(meet: meet, year: year);
       final matched = allItems.where((m) => m['race_ymd']?.toString() == targetYmd).toList();
 
-      if (matched.isEmpty) {
-        return const ApiResult.success([]);
+      if (matched.isNotEmpty) {
+        final races = _buildRacesFromItems(matched, meet, date);
+        return ApiResult.success(races);
       }
 
-      final races = _buildRacesFromItems(matched, meet, date);
-      return ApiResult.success(races);
+      // API 캐시가 비어있으면 (창원·부산) 크롤링 시도
+      if (meet == 2 || meet == 3) {
+        final scraped = await _getScrapedData(meet, date);
+        if (scraped.isNotEmpty) {
+          final races = _buildRacesFromItems(scraped, meet, date);
+          if (kDebugMode) {
+            debugPrint('[Scrape] fetchRaceList(${ApiConstants.venueName(meet)}): '
+                '${races.length}경주 크롤링 성공');
+          }
+          return ApiResult.success(races);
+        }
+      }
+
+      return const ApiResult.success([]);
     } on DioException catch (e) {
       return ApiResult.failure(_dioErrorMsg(e));
     } catch (e) {
@@ -208,8 +311,34 @@ class CyclingApiService {
         return true;
       }).toList();
 
-      final entries = _buildEntriesFromItems(matched);
-      return ApiResult.success(entries);
+      if (matched.isNotEmpty) {
+        final entries = _buildEntriesFromItems(matched);
+        return ApiResult.success(entries);
+      }
+
+      // API 캐시가 비어있으면 (창원·부산) 크롤링 시도
+      if (meet == 2 || meet == 3) {
+        final scraped = await _getScrapedData(meet, date);
+        final scrapedMatched = scraped.where((m) {
+          if (rcNo != null) {
+            final rn = int.tryParse(m['race_no']?.toString() ?? '');
+            return rn == rcNo;
+          }
+          return true;
+        }).toList();
+
+        if (scrapedMatched.isNotEmpty) {
+          final entries = _buildEntriesFromItems(scrapedMatched);
+          if (kDebugMode) {
+            final names = entries.map((e) => e.riderName).toList();
+            debugPrint('[Scrape] fetchRaceOrgan(${ApiConstants.venueName(meet)}, '
+                'R$rcNo): ${entries.length}명 $names');
+          }
+          return ApiResult.success(entries);
+        }
+      }
+
+      return const ApiResult.success([]);
     } on DioException catch (e) {
       return ApiResult.failure(_dioErrorMsg(e));
     } catch (e) {
@@ -398,14 +527,20 @@ class CyclingApiService {
       raceMap[rn]!.roundCount ??= int.tryParse(m['round_cnt']?.toString() ?? '');
     }
 
-    final sorted = raceMap.keys.toList()..sort();
+    final sorted = raceMap.keys.toList()
+      ..sort((a, b) {
+        final timeA = raceMap[a]!.departureTime ?? '';
+        final timeB = raceMap[b]!.departureTime ?? '';
+        if (timeA.isNotEmpty && timeB.isNotEmpty) return timeA.compareTo(timeB);
+        return a.compareTo(b);
+      });
     return sorted
         .map((no) => Race(
               venueCode: meet,
               date: dateYmd,
               raceNo: no,
               venueName: ApiConstants.venueName(meet),
-              distance: raceMap[no]!.distance ?? 2025,
+              distance: raceMap[no]!.distance ?? 0,
               departureTime: raceMap[no]!.departureTime,
               racerCount: raceMap[no]!.count,
               roundCount: raceMap[no]!.roundCount ?? 0,

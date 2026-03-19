@@ -91,7 +91,7 @@ class RaceCard extends StatelessWidget {
               ),
               const SizedBox(height: 4),
               Text(
-                '${race.venueName} · ${race.distance}m',
+                '${race.venueName} · ${race.distance > 0 ? '${race.distance}m' : ''}',
                 style: TextStyle(
                   color: Colors.white.withValues(alpha: 0.5),
                   fontSize: 13,
@@ -126,7 +126,7 @@ class RaceCard extends StatelessWidget {
         Icon(Icons.straighten_rounded,
             size: 14, color: Colors.white.withValues(alpha: 0.4)),
         const SizedBox(width: 4),
-        Text('${race.distance}m',
+        Text(race.distance > 0 ? '${race.distance}m' : '--',
             style: TextStyle(
                 color: Colors.white.withValues(alpha: 0.5), fontSize: 12)),
         const Spacer(),

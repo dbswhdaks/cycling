@@ -291,10 +291,22 @@ class HomeScreen extends ConsumerWidget {
 
   Widget _buildUpdateRow(WidgetRef ref, int selectedVenue, String dateYmd) {
     final lastRefresh = ref.watch(_lastRefreshProvider);
+    final racesAsync = ref.watch(
+      raceListProvider((venue: selectedVenue, date: dateYmd)),
+    );
     final diff = DateTime.now().difference(lastRefresh);
     final timeText = diff.inMinutes > 0
         ? '${diff.inMinutes}분 전 업데이트'
         : '${diff.inSeconds}초 전 업데이트';
+
+    final sourceText = racesAsync.whenOrNull(
+      data: (result) {
+        if (result.fromApi) return 'API';
+        if (result.apiError == '캐시 데이터') return '캐시';
+        if (result.apiError != null) return '목업';
+        return null;
+      },
+    );
 
     return Row(
       children: [
@@ -305,14 +317,43 @@ class HomeScreen extends ConsumerWidget {
             fontSize: 12,
           ),
         ),
+        if (sourceText != null) ...[
+          const SizedBox(width: 6),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+              color: sourceText == 'API'
+                  ? const Color(0xFF22C55E).withValues(alpha: 0.15)
+                  : sourceText == '캐시'
+                      ? const Color(0xFF3B82F6).withValues(alpha: 0.15)
+                      : const Color(0xFFF59E0B).withValues(alpha: 0.15),
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: Text(
+              sourceText,
+              style: TextStyle(
+                color: sourceText == 'API'
+                    ? const Color(0xFF22C55E)
+                    : sourceText == '캐시'
+                        ? const Color(0xFF3B82F6)
+                        : const Color(0xFFF59E0B),
+                fontSize: 10,
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+          ),
+        ],
         const SizedBox(width: 4),
         GestureDetector(
           onTap: () {
             ref.read(_lastRefreshProvider.notifier).state = DateTime.now();
             ref.read(cyclingApiServiceProvider).invalidateOrganCache();
-            ref.invalidate(
-              raceListProvider((venue: selectedVenue, date: dateYmd)),
-            );
+            ref.read(supabaseBackupProvider).clearCacheForDate(dateYmd);
+            for (final v in venues) {
+              ref.invalidate(
+                raceListProvider((venue: v.code, date: dateYmd)),
+              );
+            }
           },
           child: Icon(
             Icons.refresh_rounded,

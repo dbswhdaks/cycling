@@ -1,4 +1,4 @@
-package com.example.cycling
+package com.gyeongryunplus.app
 
 import io.flutter.embedding.android.FlutterActivity
 

@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../../core/constants/api_constants.dart';
 import '../../../core/data/mock_data.dart';
 import '../../../core/services/cycling_api_service.dart';
 import '../../../core/services/prediction_engine.dart';
@@ -10,6 +11,8 @@ import '../../../models/race_result.dart';
 import '../../../models/odds.dart';
 import '../../../models/prediction.dart';
 import '../../../models/rider_detail.dart';
+
+String _venueName(int code) => ApiConstants.venueName(code);
 
 final cyclingApiServiceProvider = Provider<CyclingApiService>((ref) {
   return CyclingApiService();
@@ -104,6 +107,7 @@ final raceListProvider =
         (ref, params) async {
   final api = ref.watch(cyclingApiServiceProvider);
   final backup = ref.watch(supabaseBackupProvider);
+  final venueName = _venueName(params.venue);
 
   final meet = params.venue > 0 ? params.venue : 1;
   final result = await api.fetchRaceList(
@@ -112,19 +116,28 @@ final raceListProvider =
   );
 
   if (result.isSuccess && result.data != null && result.data!.isNotEmpty) {
-    if (kDebugMode) debugPrint('[Provider] raceList: API 데이터 ${result.data!.length}건');
+    if (kDebugMode) {
+      debugPrint('[Provider] raceList($venueName, ${params.date}): '
+          'API 데이터 ${result.data!.length}건');
+    }
     backup.saveRaces(result.data!);
     return DataWithSource(data: result.data!, fromApi: true);
   }
 
   final cached = await backup.loadRaces(venueCode: params.venue, date: params.date);
   if (cached.isNotEmpty) {
-    if (kDebugMode) debugPrint('[Provider] raceList: Supabase 캐시 ${cached.length}건');
+    if (kDebugMode) {
+      debugPrint('[Provider] raceList($venueName, ${params.date}): '
+          'Supabase 캐시 ${cached.length}건');
+    }
     return DataWithSource(data: cached, fromApi: false, apiError: '캐시 데이터');
   }
 
   if (_isRaceDay(params.date)) {
-    if (kDebugMode) debugPrint('[Provider] raceList: API/캐시 없음 → 경기일 목업 (${result.errorMessage})');
+    if (kDebugMode) {
+      debugPrint('[Provider] raceList($venueName, ${params.date}): '
+          'API/캐시 없음 → 경기일 목업 (${result.errorMessage})');
+    }
     return DataWithSource(
       data: MockData.racesFor(params.venue, params.date),
       fromApi: false,
@@ -132,7 +145,10 @@ final raceListProvider =
     );
   }
 
-  if (kDebugMode) debugPrint('[Provider] raceList: API/캐시 없음 → 비경기일 빈 목록 (${result.errorMessage})');
+  if (kDebugMode) {
+    debugPrint('[Provider] raceList($venueName, ${params.date}): '
+        'API/캐시 없음 → 비경기일 빈 목록 (${result.errorMessage})');
+  }
   return DataWithSource(
     data: <Race>[],
     fromApi: false,
@@ -145,6 +161,7 @@ final raceEntriesProvider = FutureProvider.family<DataWithSource<List<RaceEntry>
     ({int venue, String date, int raceNo})>((ref, params) async {
   final api = ref.watch(cyclingApiServiceProvider);
   final backup = ref.watch(supabaseBackupProvider);
+  final venueName = _venueName(params.venue);
 
   final organResult = await api.fetchRaceOrgan(
     meet: params.venue,
@@ -152,6 +169,11 @@ final raceEntriesProvider = FutureProvider.family<DataWithSource<List<RaceEntry>
     rcNo: params.raceNo,
   );
   if (organResult.isSuccess && organResult.data != null && organResult.data!.isNotEmpty) {
+    if (kDebugMode) {
+      final names = organResult.data!.map((e) => e.riderName).toList();
+      debugPrint('[Provider] entries($venueName, ${params.date}, R${params.raceNo}): '
+          '데이터 ${organResult.data!.length}명 $names');
+    }
     backup.saveEntries(
       venueCode: params.venue, date: params.date,
       raceNo: params.raceNo, entries: organResult.data!,
@@ -163,10 +185,17 @@ final raceEntriesProvider = FutureProvider.family<DataWithSource<List<RaceEntry>
     venueCode: params.venue, date: params.date, raceNo: params.raceNo,
   );
   if (cached.isNotEmpty) {
-    if (kDebugMode) debugPrint('[Provider] entries: Supabase 캐시 ${cached.length}건');
+    if (kDebugMode) {
+      debugPrint('[Provider] entries($venueName, ${params.date}, R${params.raceNo}): '
+          'Supabase 캐시 ${cached.length}명');
+    }
     return DataWithSource(data: cached, fromApi: false, apiError: '캐시 데이터');
   }
 
+  if (kDebugMode) {
+    debugPrint('[Provider] entries($venueName, ${params.date}, R${params.raceNo}): '
+        '목업 데이터 (${organResult.errorMessage})');
+  }
   return DataWithSource(
     data: MockData.entriesFor(params.raceNo, params.venue),
     fromApi: false,
