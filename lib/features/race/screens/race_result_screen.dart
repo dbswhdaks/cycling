@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/constants/api_constants.dart';
@@ -7,7 +8,7 @@ import '../../../models/odds.dart';
 import '../../../models/prediction.dart';
 import '../providers/race_providers.dart';
 
-class RaceResultScreen extends ConsumerWidget {
+class RaceResultScreen extends ConsumerStatefulWidget {
   final int venueCode;
   final String date;
   final int raceNo;
@@ -19,6 +20,19 @@ class RaceResultScreen extends ConsumerWidget {
     required this.raceNo,
   });
 
+  @override
+  ConsumerState<RaceResultScreen> createState() => _RaceResultScreenState();
+}
+
+class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
+  Timer? _autoRefreshTimer;
+  bool _isRefreshing = false;
+  int _refreshCount = 0;
+
+  int get venueCode => widget.venueCode;
+  String get date => widget.date;
+  int get raceNo => widget.raceNo;
+
   String get venueName => ApiConstants.venueName(venueCode);
 
   String get displayDate {
@@ -26,6 +40,13 @@ class RaceResultScreen extends ConsumerWidget {
       return '${date.substring(0, 4)}년 ${date.substring(4, 6)}월 ${date.substring(6, 8)}일';
     }
     return date;
+  }
+
+  bool get _isTodayRace {
+    if (date.length < 8) return false;
+    final now = DateTime.now();
+    final todayStr = '${now.year}${now.month.toString().padLeft(2, '0')}${now.day.toString().padLeft(2, '0')}';
+    return date == todayStr;
   }
 
   bool get _isNotYetRace {
@@ -43,40 +64,64 @@ class RaceResultScreen extends ConsumerWidget {
       error.toString().contains('NOT_YET');
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final resultAsync = ref.watch(raceResultProvider((
-      venue: venueCode,
-      date: date,
-      raceNo: raceNo,
-    )));
-    final rankAsync = ref.watch(raceRankProvider((
-      venue: venueCode,
-      date: date,
-      raceNo: raceNo,
-    )));
-    final predictionAsync = ref.watch(predictionProvider((
-      venue: venueCode,
-      date: date,
-      raceNo: raceNo,
-    )));
-    final entriesAsync = ref.watch(raceEntriesProvider((
-      venue: venueCode,
-      date: date,
-      raceNo: raceNo,
-    )));
-    final oddsAsync = ref.watch(oddsProvider((
-      venue: venueCode,
-      date: date,
-      raceNo: raceNo,
-    )));
+  void initState() {
+    super.initState();
+    _startAutoRefreshIfNeeded();
+  }
+
+  @override
+  void dispose() {
+    _autoRefreshTimer?.cancel();
+    super.dispose();
+  }
+
+  void _startAutoRefreshIfNeeded() {
+    if (!_isTodayRace) return;
+    _autoRefreshTimer = Timer.periodic(const Duration(seconds: 30), (_) {
+      _refreshData();
+    });
+  }
+
+  void _stopAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    _autoRefreshTimer = null;
+  }
+
+  void _refreshData() {
+    if (!mounted) return;
+    setState(() {
+      _isRefreshing = true;
+      _refreshCount++;
+    });
+    final params = (venue: venueCode, date: date, raceNo: raceNo);
+    ref.invalidate(raceResultProvider(params));
+    ref.invalidate(raceRankProvider(params));
+    ref.invalidate(oddsProvider(params));
+    Future.delayed(const Duration(seconds: 2), () {
+      if (mounted) setState(() => _isRefreshing = false);
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final params = (venue: venueCode, date: date, raceNo: raceNo);
+    final resultAsync = ref.watch(raceResultProvider(params));
+    final rankAsync = ref.watch(raceRankProvider(params));
+    final predictionAsync = ref.watch(predictionProvider(params));
+    final entriesAsync = ref.watch(raceEntriesProvider(params));
+    final oddsAsync = ref.watch(oddsProvider(params));
 
     final isNotYet = _isNotYetRace
         || (_isNotYetError(rankAsync.error ?? '') && _isNotYetError(resultAsync.error ?? ''));
 
+    if (!isNotYet && _autoRefreshTimer != null) {
+      _stopAutoRefresh();
+    }
+
     return Scaffold(
       body: CustomScrollView(
         slivers: [
-          _buildAppBar(context),
+          _buildAppBar(context, isNotYet: isNotYet),
           SliverToBoxAdapter(
             child: Padding(
               padding: const EdgeInsets.all(20),
@@ -162,7 +207,7 @@ class RaceResultScreen extends ConsumerWidget {
 
   // ─── AppBar ───
 
-  Widget _buildAppBar(BuildContext context) {
+  Widget _buildAppBar(BuildContext context, {bool isNotYet = false}) {
     return SliverAppBar(
       expandedHeight: 130,
       pinned: true,
@@ -170,6 +215,28 @@ class RaceResultScreen extends ConsumerWidget {
         icon: const Icon(Icons.arrow_back_rounded),
         onPressed: () => Navigator.of(context).pop(),
       ),
+      actions: [
+        if (_isRefreshing)
+          const Padding(
+            padding: EdgeInsets.only(right: 16),
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(
+                  strokeWidth: 2,
+                  color: Colors.white,
+                ),
+              ),
+            ),
+          )
+        else
+          IconButton(
+            icon: const Icon(Icons.refresh_rounded),
+            tooltip: '새로고침',
+            onPressed: _refreshData,
+          ),
+      ],
       flexibleSpace: FlexibleSpaceBar(
         title: Text('$venueName ${raceNo}R 결과'),
         background: Container(
@@ -234,9 +301,11 @@ class RaceResultScreen extends ConsumerWidget {
   Widget _buildNotYetSection(BuildContext context) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final isAutoRefreshing = _autoRefreshTimer != null && _isTodayRace;
+
     return Container(
       width: double.infinity,
-      padding: const EdgeInsets.symmetric(vertical: 60, horizontal: 24),
+      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
       decoration: BoxDecoration(
         color: isDark
             ? const Color(0xFFF59E0B).withValues(alpha: 0.06)
@@ -255,41 +324,110 @@ class RaceResultScreen extends ConsumerWidget {
               color: const Color(0xFFF59E0B).withValues(alpha: 0.12),
               shape: BoxShape.circle,
             ),
-            child: const Icon(
-              Icons.schedule_rounded,
-              size: 36,
-              color: Color(0xFFF59E0B),
-            ),
+            child: isAutoRefreshing
+                ? Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      SizedBox(
+                        width: 56,
+                        height: 56,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2.5,
+                          color: const Color(0xFFF59E0B).withValues(alpha: 0.4),
+                        ),
+                      ),
+                      const Icon(
+                        Icons.schedule_rounded,
+                        size: 30,
+                        color: Color(0xFFF59E0B),
+                      ),
+                    ],
+                  )
+                : const Icon(
+                    Icons.schedule_rounded,
+                    size: 36,
+                    color: Color(0xFFF59E0B),
+                  ),
           ),
           const SizedBox(height: 20),
           Text(
-            '아직 경기가 진행되지 않았습니다',
+            '경기 결과 대기 중',
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w700,
             ),
           ),
           const SizedBox(height: 8),
           Text(
-            '$displayDate 경기는 아직 시작 전이므로\n결과를 확인할 수 없습니다.',
+            isAutoRefreshing
+                ? '경기가 끝나면 결과가 자동으로 표시됩니다.\n30초마다 자동 새로고침 중...'
+                : '$displayDate 경기는 아직 시작 전이므로\n결과를 확인할 수 없습니다.',
             textAlign: TextAlign.center,
             style: theme.textTheme.bodyMedium?.copyWith(
               color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
               height: 1.5,
             ),
           ),
-          const SizedBox(height: 24),
-          FilledButton.icon(
-            onPressed: () => Navigator.of(context).pop(),
-            icon: const Icon(Icons.arrow_back_rounded, size: 18),
-            label: const Text('돌아가기'),
-            style: FilledButton.styleFrom(
-              backgroundColor: const Color(0xFFF59E0B),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(12),
+          if (isAutoRefreshing && _refreshCount > 0) ...[
+            const SizedBox(height: 8),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFF3B82F6).withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                '새로고침 ${_refreshCount}회 완료',
+                style: const TextStyle(
+                  color: Color(0xFF3B82F6),
+                  fontSize: 11,
+                  fontWeight: FontWeight.w600,
+                ),
               ),
             ),
+          ],
+          const SizedBox(height: 24),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              FilledButton.icon(
+                onPressed: _refreshData,
+                icon: _isRefreshing
+                    ? const SizedBox(
+                        width: 16,
+                        height: 16,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Icon(Icons.refresh_rounded, size: 18),
+                label: Text(_isRefreshing ? '확인 중...' : '지금 확인'),
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFFBBF24),
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 12),
+              OutlinedButton.icon(
+                onPressed: () => Navigator.of(context).pop(),
+                icon: const Icon(Icons.arrow_back_rounded, size: 18),
+                label: const Text('돌아가기'),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+                  side: BorderSide(
+                    color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                ),
+              ),
+            ],
           ),
         ],
       ),

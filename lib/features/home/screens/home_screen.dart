@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -12,7 +13,7 @@ final selectedVenueProvider = StateProvider<int>((ref) => 1);
 
 final _lastRefreshProvider = StateProvider<DateTime>((ref) => DateTime.now());
 
-class HomeScreen extends ConsumerWidget {
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   static const List<({String name, int code})> venues = [
@@ -22,7 +23,89 @@ class HomeScreen extends ConsumerWidget {
   ];
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObserver {
+  static const _autoRefreshInterval = Duration(seconds: 60);
+  Timer? _autoRefreshTimer;
+  Timer? _displayTimer;
+  bool _autoRefreshEnabled = true;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    _startAutoRefresh();
+    _startDisplayTimer();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    _autoRefreshTimer?.cancel();
+    _displayTimer?.cancel();
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      _refreshNow();
+      _startAutoRefresh();
+    } else if (state == AppLifecycleState.paused) {
+      _autoRefreshTimer?.cancel();
+    }
+  }
+
+  bool get _isSelectedDateToday {
+    final selectedDate = ref.read(selectedDateProvider);
+    final now = DateTime.now();
+    return selectedDate.year == now.year &&
+        selectedDate.month == now.month &&
+        selectedDate.day == now.day;
+  }
+
+  void _startAutoRefresh() {
+    _autoRefreshTimer?.cancel();
+    if (!_autoRefreshEnabled) return;
+    _autoRefreshTimer = Timer.periodic(_autoRefreshInterval, (_) {
+      if (_isSelectedDateToday) _refreshNow();
+    });
+  }
+
+  void _startDisplayTimer() {
+    _displayTimer = Timer.periodic(const Duration(seconds: 10), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _refreshNow() {
+    if (!mounted) return;
+    final selectedDate = ref.read(selectedDateProvider);
+    final dateYmd = _dateToYmd(selectedDate);
+
+    ref.read(_lastRefreshProvider.notifier).state = DateTime.now();
+    ref.read(cyclingApiServiceProvider).invalidateOrganCache();
+    ref.read(supabaseBackupProvider).clearCacheForDate(dateYmd);
+    for (final v in HomeScreen.venues) {
+      ref.invalidate(raceListProvider((venue: v.code, date: dateYmd)));
+    }
+  }
+
+  void _toggleAutoRefresh() {
+    setState(() {
+      _autoRefreshEnabled = !_autoRefreshEnabled;
+    });
+    if (_autoRefreshEnabled) {
+      _startAutoRefresh();
+    } else {
+      _autoRefreshTimer?.cancel();
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     final selectedVenue = ref.watch(selectedVenueProvider);
     final selectedDate = ref.watch(selectedDateProvider);
     final dateYmd = _dateToYmd(selectedDate);
@@ -35,15 +118,15 @@ class HomeScreen extends ConsumerWidget {
       body: SafeArea(
         child: Column(
           children: [
-            _buildAppBar(context, ref, racesAsync),
-            _buildVenueTabs(ref, selectedVenue),
+            _buildAppBar(context, racesAsync),
+            _buildVenueTabs(selectedVenue),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 0),
-              child: _buildDateSelector(context, ref),
+              child: _buildDateSelector(context),
             ),
             Padding(
               padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
-              child: _buildUpdateRow(ref, selectedVenue, dateYmd),
+              child: _buildUpdateRow(selectedVenue, dateYmd),
             ),
             Expanded(
               child: racesAsync.when(
@@ -63,7 +146,6 @@ class HomeScreen extends ConsumerWidget {
                 error: (_, __) => SingleChildScrollView(
                   child: _buildErrorFallback(
                     context,
-                    ref,
                     selectedVenue,
                     dateYmd,
                   ),
@@ -80,12 +162,11 @@ class HomeScreen extends ConsumerWidget {
 
   Widget _buildAppBar(
     BuildContext context,
-    WidgetRef ref,
     AsyncValue<DataWithSource<List<Race>>> racesAsync,
   ) {
     final selectedVenue = ref.watch(selectedVenueProvider);
     final selectedDate = ref.watch(selectedDateProvider);
-    final venueName = venues
+    final venueName = HomeScreen.venues
         .firstWhere(
           (v) => v.code == selectedVenue,
           orElse: () => (name: '경륜', code: 1),
@@ -129,6 +210,14 @@ class HomeScreen extends ConsumerWidget {
               );
             },
           ),
+          IconButton(
+            icon: const Icon(
+              Icons.settings_rounded,
+              color: Color(0xFF6B7280),
+              size: 22,
+            ),
+            onPressed: () => context.push('/settings'),
+          ),
         ],
       ),
     );
@@ -136,7 +225,7 @@ class HomeScreen extends ConsumerWidget {
 
   // ─── 경기장 탭 ───
 
-  Widget _buildVenueTabs(WidgetRef ref, int selectedVenue) {
+  Widget _buildVenueTabs(int selectedVenue) {
     return Container(
       decoration: BoxDecoration(
         border: Border(
@@ -144,7 +233,7 @@ class HomeScreen extends ConsumerWidget {
         ),
       ),
       child: Row(
-        children: venues.map((v) {
+        children: HomeScreen.venues.map((v) {
           final isSelected = selectedVenue == v.code;
           return Expanded(
             child: GestureDetector(
@@ -183,7 +272,7 @@ class HomeScreen extends ConsumerWidget {
 
   // ─── 날짜 선택 ───
 
-  Widget _buildDateSelector(BuildContext context, WidgetRef ref) {
+  Widget _buildDateSelector(BuildContext context) {
     final selectedDate = ref.watch(selectedDateProvider);
     final today = DateTime.now();
     const weekdays = ['월', '화', '수', '목', '금', '토', '일'];
@@ -289,7 +378,7 @@ class HomeScreen extends ConsumerWidget {
 
   // ─── 업데이트 시간 + 새로고침 ───
 
-  Widget _buildUpdateRow(WidgetRef ref, int selectedVenue, String dateYmd) {
+  Widget _buildUpdateRow(int selectedVenue, String dateYmd) {
     final lastRefresh = ref.watch(_lastRefreshProvider);
     final racesAsync = ref.watch(
       raceListProvider((venue: selectedVenue, date: dateYmd)),
@@ -345,20 +434,52 @@ class HomeScreen extends ConsumerWidget {
         ],
         const SizedBox(width: 4),
         GestureDetector(
-          onTap: () {
-            ref.read(_lastRefreshProvider.notifier).state = DateTime.now();
-            ref.read(cyclingApiServiceProvider).invalidateOrganCache();
-            ref.read(supabaseBackupProvider).clearCacheForDate(dateYmd);
-            for (final v in venues) {
-              ref.invalidate(
-                raceListProvider((venue: v.code, date: dateYmd)),
-              );
-            }
-          },
+          onTap: _refreshNow,
           child: Icon(
             Icons.refresh_rounded,
             color: Colors.white.withValues(alpha: 0.4),
             size: 16,
+          ),
+        ),
+        const Spacer(),
+        GestureDetector(
+          onTap: _toggleAutoRefresh,
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: _autoRefreshEnabled
+                  ? const Color(0xFF22C55E).withValues(alpha: 0.12)
+                  : Colors.white.withValues(alpha: 0.06),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                color: _autoRefreshEnabled
+                    ? const Color(0xFF22C55E).withValues(alpha: 0.3)
+                    : Colors.white.withValues(alpha: 0.1),
+              ),
+            ),
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(
+                  _autoRefreshEnabled ? Icons.sync_rounded : Icons.sync_disabled_rounded,
+                  size: 12,
+                  color: _autoRefreshEnabled
+                      ? const Color(0xFF22C55E)
+                      : Colors.white.withValues(alpha: 0.4),
+                ),
+                const SizedBox(width: 4),
+                Text(
+                  _autoRefreshEnabled ? '자동갱신 ON' : '자동갱신 OFF',
+                  style: TextStyle(
+                    color: _autoRefreshEnabled
+                        ? const Color(0xFF22C55E)
+                        : Colors.white.withValues(alpha: 0.4),
+                    fontSize: 10,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ],
+            ),
           ),
         ),
       ],
@@ -405,7 +526,6 @@ class HomeScreen extends ConsumerWidget {
 
   Widget _buildErrorFallback(
     BuildContext context,
-    WidgetRef ref,
     int venue,
     String dateYmd,
   ) {
