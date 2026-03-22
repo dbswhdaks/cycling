@@ -244,9 +244,12 @@ class PredictionTab extends StatelessWidget {
               children: [
                 Row(
                   children: [
-                    Text(
-                      r.riderName,
-                      style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                    Flexible(
+                      child: Text(
+                        r.riderName,
+                        style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+                        overflow: TextOverflow.ellipsis,
+                      ),
                     ),
                     const SizedBox(width: 6),
                     _chip(r.grade, _gradeColor(r.grade)),

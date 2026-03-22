@@ -57,7 +57,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     final month = int.tryParse(date.substring(4, 6)) ?? 0;
     final day = int.tryParse(date.substring(6, 8)) ?? 0;
     final raceDate = DateTime(year, month, day);
-    return !raceDate.isBefore(today);
+    return raceDate.isAfter(today);
   }
 
   static bool _isNotYetError(Object error) =>
@@ -114,7 +114,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     final isNotYet = _isNotYetRace
         || (_isNotYetError(rankAsync.error ?? '') && _isNotYetError(resultAsync.error ?? ''));
 
-    if (!isNotYet && _autoRefreshTimer != null) {
+    if (!isNotYet && _autoRefreshTimer != null && !_isTodayRace) {
       _stopAutoRefresh();
     }
 
@@ -648,6 +648,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
                         fontWeight: FontWeight.w700,
                         fontSize: 15,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                     Text(
                       item.detail,
@@ -655,6 +656,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
                         color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
                         fontSize: 11,
                       ),
+                      overflow: TextOverflow.ellipsis,
                     ),
                   ],
                 ),

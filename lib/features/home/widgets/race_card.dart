@@ -30,8 +30,17 @@ class _RaceCardState extends State<RaceCard> {
     return times[(race.raceNo - 1) % times.length];
   }
 
-  bool get _isFinished =>
-      race.status == '종료' || race.status == '확정' || race.status == '완료';
+  bool get _isFinished {
+    if (race.status == '종료' || race.status == '확정' || race.status == '완료') {
+      return true;
+    }
+    final raceTime = _raceDateTime;
+    if (raceTime != null) {
+      final elapsed = DateTime.now().difference(raceTime);
+      if (elapsed.inMinutes >= 30) return true;
+    }
+    return false;
+  }
 
   DateTime? get _raceDateTime {
     final cleaned = race.date.replaceAll('.', '').replaceAll('-', '');
@@ -164,7 +173,7 @@ class _RaceCardState extends State<RaceCard> {
                     ),
                   ),
                   const SizedBox(width: 8),
-                  _statusBadge(),
+                  Flexible(child: _statusBadge()),
                 ],
               ),
               const SizedBox(height: 4),
@@ -242,7 +251,9 @@ class _RaceCardState extends State<RaceCard> {
     if (_isFinished) {
       bgColor = Colors.white.withValues(alpha: 0.12);
       textColor = Colors.white.withValues(alpha: 0.7);
-      label = race.status;
+      label = (race.status == '종료' || race.status == '확정' || race.status == '완료')
+          ? race.status
+          : '종료';
     } else if (isInProgress) {
       bgColor = const Color(0xFFF97316).withValues(alpha: 0.15);
       textColor = const Color(0xFFF97316);

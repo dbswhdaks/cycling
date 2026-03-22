@@ -60,7 +60,7 @@ bool _isRaceDateNotFinished(String dateStr) {
   final month = int.tryParse(dateStr.substring(4, 6)) ?? 0;
   final day = int.tryParse(dateStr.substring(6, 8)) ?? 0;
   final raceDate = DateTime(year, month, day);
-  return !raceDate.isBefore(today);
+  return raceDate.isAfter(today);
 }
 
 /// API 연결 상태 확인

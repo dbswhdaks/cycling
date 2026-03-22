@@ -271,25 +271,23 @@ class RiderDetailScreen extends ConsumerWidget {
                   ),
                 ),
                 const SizedBox(height: 6),
-                Row(
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 4,
                   children: [
                     _buildChip(context, detail.grade, gradeColor),
-                    if (detail.tacticLabel.isNotEmpty && detail.tacticLabel != '-') ...[
-                      const SizedBox(width: 8),
+                    if (detail.tacticLabel.isNotEmpty && detail.tacticLabel != '-')
                       _buildChip(
                         context,
                         detail.tacticLabel,
                         theme.colorScheme.primary,
                       ),
-                    ],
-                    if (detail.yearRaceCount > 0) ...[
-                      const SizedBox(width: 8),
+                    if (detail.yearRaceCount > 0)
                       _buildChip(
                         context,
                         '${detail.yearRaceCount}전',
                         const Color(0xFF22C55E),
                       ),
-                    ],
                   ],
                 ),
               ],

@@ -468,10 +468,13 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                               children: [
                                 Row(
                                   children: [
-                                    Text(
-                                      '${e.lineNo}번 ${e.riderName}',
-                                      style: theme.textTheme.bodyMedium?.copyWith(
-                                        fontWeight: FontWeight.w600,
+                                    Flexible(
+                                      child: Text(
+                                        '${e.lineNo}번 ${e.riderName}',
+                                        style: theme.textTheme.bodyMedium?.copyWith(
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
                                     const SizedBox(width: 6),
@@ -572,9 +575,12 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           ),
         ),
         const SizedBox(width: 10),
-        Text(
-          pick,
-          style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+        Expanded(
+          child: Text(
+            pick,
+            style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            overflow: TextOverflow.ellipsis,
+          ),
         ),
       ],
     );

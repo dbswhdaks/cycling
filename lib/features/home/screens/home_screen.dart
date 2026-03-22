@@ -210,14 +210,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
               );
             },
           ),
-          IconButton(
-            icon: const Icon(
-              Icons.settings_rounded,
-              color: Color(0xFF6B7280),
-              size: 22,
-            ),
-            onPressed: () => context.push('/settings'),
-          ),
         ],
       ),
     );
