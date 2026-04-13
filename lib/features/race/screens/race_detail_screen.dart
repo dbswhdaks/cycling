@@ -75,6 +75,9 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           SliverToBoxAdapter(
             child: _buildDateHeader(theme),
           ),
+          SliverToBoxAdapter(
+            child: _buildVideoButtons(context, theme),
+          ),
           SliverPersistentHeader(
             pinned: true,
             delegate: _SliverTabBarDelegate(
@@ -691,6 +694,51 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
             style: theme.textTheme.bodyLarge?.copyWith(
               fontWeight: FontWeight.w600,
               color: theme.colorScheme.onSurface,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildVideoButtons(BuildContext context, ThemeData theme) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => context.push('/video'),
+              icon: const Icon(Icons.play_arrow_rounded, size: 18),
+              label: const Text('전체재생'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: theme.colorScheme.onSurface.withValues(alpha: 0.8),
+                side: BorderSide(
+                  color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: OutlinedButton.icon(
+              onPressed: () => context.push('/video'),
+              icon: const Icon(Icons.play_circle_outline_rounded, size: 18),
+              label: const Text('경주영상'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFFF59E0B),
+                side: const BorderSide(
+                  color: Color(0xFFF59E0B),
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(vertical: 12),
+              ),
             ),
           ),
         ],

@@ -1,5 +1,5 @@
 name: cycling
-description: "A new Flutter project."
+description: "경륜 Plus - 경륜 경주 정보, 출주표, 배당률, AI 예측을 제공하는 앱"
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
 publish_to: 'none' # Remove this line if you wish to publish to pub.dev
@@ -41,6 +41,8 @@ dependencies:
   shared_preferences: ^2.5.4
   supabase_flutter: ^2.12.0
   html: ^0.15.4
+  webview_flutter: ^4.10.0
+  video_player: ^2.9.2
 
 dev_dependencies:
   flutter_test:

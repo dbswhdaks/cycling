@@ -197,6 +197,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
           const Spacer(),
           IconButton(
             icon: Icon(
+              Icons.videocam_rounded,
+              color: Colors.white.withValues(alpha: 0.8),
+              size: 24,
+            ),
+            tooltip: '경주 동영상',
+            onPressed: () => context.push('/video'),
+          ),
+          IconButton(
+            icon: Icon(
               Icons.share_rounded,
               color: Colors.white.withValues(alpha: 0.8),
               size: 22,

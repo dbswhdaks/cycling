@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../models/race_entry.dart';
 import '../../../models/race_result.dart';
@@ -258,8 +259,6 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
 
   Widget _buildDateHeader(BuildContext context, {bool isNotYet = false}) {
     final theme = Theme.of(context);
-    final statusColor = isNotYet ? const Color(0xFFF59E0B) : const Color(0xFF22C55E);
-    final statusText = isNotYet ? '경기 전' : '확정';
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
       decoration: BoxDecoration(
@@ -278,18 +277,32 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
             ),
           ),
           const Spacer(),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.15),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              statusText,
-              style: TextStyle(
-                color: statusColor,
-                fontSize: 12,
-                fontWeight: FontWeight.w700,
+          GestureDetector(
+            onTap: () => context.push('/video'),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF59E0B).withValues(alpha: 0.15),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(
+                  color: const Color(0xFFF59E0B).withValues(alpha: 0.3),
+                ),
+              ),
+              child: const Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(Icons.play_circle_outline_rounded,
+                      size: 14, color: Color(0xFFF59E0B)),
+                  SizedBox(width: 4),
+                  Text(
+                    '경주 영상',
+                    style: TextStyle(
+                      color: Color(0xFFF59E0B),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
               ),
             ),
           ),
