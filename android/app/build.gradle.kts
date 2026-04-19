@@ -43,7 +43,7 @@ val releaseKeyAlias = envOrProperty("ANDROID_UPLOAD_KEY_ALIAS", "keyAlias")
 val releaseKeyPassword = envOrProperty("ANDROID_UPLOAD_KEY_PASSWORD", "keyPassword")
 
 val expectedUploadSha1 = (
-    env["ANDROID_UPLOAD_SHA1"]?.trim()
+    envOrProperty("ANDROID_UPLOAD_SHA1", "expectedSha1")
         ?: "CD:95:22:8D:BB:BF:EB:60:25:91:DE:00:36:87:8A:64:B1:32:66:86"
 ).uppercase(Locale.US)
 

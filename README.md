@@ -33,6 +33,7 @@ Use one of the following:
   - `ANDROID_UPLOAD_KEY_PASSWORD`
   - Optional override: `ANDROID_UPLOAD_SHA1`
 - or `android/key.properties` (local-only, never commit)
+  - Optional: `expectedSha1`
 
 You can copy `android/key.properties.example` and rename it to `android/key.properties`.
 
