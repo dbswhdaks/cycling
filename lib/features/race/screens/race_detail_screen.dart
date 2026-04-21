@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import '../../../core/constants/subscription_constants.dart';
 import '../../../models/race_entry.dart';
 import '../../../models/odds.dart';
 import '../../../core/constants/api_constants.dart';
@@ -26,19 +28,77 @@ class RaceDetailScreen extends ConsumerStatefulWidget {
 }
 
 class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late TabController _tabController;
+  bool _isSubscribing = false;
+  SubscriptionPlan _selectedPlan = SubscriptionPlan.monthly;
 
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 2, vsync: this);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.invalidate(isSubscribedProvider);
+    });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _tabController.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      ref.invalidate(isSubscribedProvider);
+    }
+  }
+
+  Future<void> _activateSubscription() async {
+    if (_isSubscribing) return;
+
+    final client = Supabase.instance.client;
+    final user = client.auth.currentUser;
+    if (user == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('로그인 후 구독할 수 있습니다.')));
+      return;
+    }
+
+    setState(() => _isSubscribing = true);
+    try {
+      final periodDays = SubscriptionConstants.periodDaysFor(_selectedPlan);
+      final response = await client.functions.invoke(
+        SubscriptionConstants.activateSubscriptionFunctionName,
+        body: {
+          'plan': SubscriptionConstants.dbPlanValueFor(_selectedPlan),
+          'period_days': periodDays,
+        },
+      );
+      if (response.status != 200 && response.status != 201) {
+        throw Exception('activate-subscription failed: ${response.status}');
+      }
+
+      if (!mounted) return;
+      ref.invalidate(isSubscribedProvider);
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('구독이 활성화되었습니다.')));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('결제 처리 중 오류가 발생했습니다. 다시 시도해 주세요.')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() => _isSubscribing = false);
+      }
+    }
   }
 
   int get venueCode => widget.venueCode;
@@ -57,34 +117,44 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final entriesAsync = ref.watch(raceEntriesProvider((
-      venue: venueCode,
-      date: date.length == 8 ? date : _todayYmd,
-      raceNo: raceNo,
-    )));
-    final oddsAsync = ref.watch(oddsProvider((
-      venue: venueCode,
-      date: date.length == 8 ? date : _todayYmd,
-      raceNo: raceNo,
-    )));
+    final isSubscribedAsync = ref.watch(isSubscribedProvider);
+    final isSubscribed = isSubscribedAsync.valueOrNull ?? false;
+    final entriesAsync = ref.watch(
+      raceEntriesProvider((
+        venue: venueCode,
+        date: date.length == 8 ? date : _todayYmd,
+        raceNo: raceNo,
+      )),
+    );
+    final oddsAsync = ref.watch(
+      oddsProvider((
+        venue: venueCode,
+        date: date.length == 8 ? date : _todayYmd,
+        raceNo: raceNo,
+      )),
+    );
 
     return Scaffold(
       body: NestedScrollView(
         headerSliverBuilder: (context, innerBoxIsScrolled) => [
           _buildAppBar(context),
-          SliverToBoxAdapter(
-            child: _buildDateHeader(theme),
+          SliverPersistentHeader(
+            pinned: true,
+            delegate: _SliverFixedHeaderDelegate(
+              height: 64,
+              child: _buildDateHeader(context, theme),
+            ),
           ),
-          SliverToBoxAdapter(
-            child: _buildVideoButtons(context, theme),
-          ),
+          SliverToBoxAdapter(child: _buildVideoButtons(context, theme)),
           SliverPersistentHeader(
             pinned: true,
             delegate: _SliverTabBarDelegate(
               TabBar(
                 controller: _tabController,
                 labelColor: theme.colorScheme.primary,
-                unselectedLabelColor: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                unselectedLabelColor: theme.colorScheme.onSurface.withValues(
+                  alpha: 0.6,
+                ),
                 indicatorColor: theme.colorScheme.primary,
                 indicatorWeight: 3,
                 labelStyle: theme.textTheme.titleMedium?.copyWith(
@@ -101,8 +171,18 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
         body: TabBarView(
           controller: _tabController,
           children: [
-            _buildComprehensiveInfoTab(context, theme, entriesAsync, oddsAsync),
-            _buildAiRecommendationTab(context, theme),
+            _buildComprehensiveInfoTab(
+              context,
+              theme,
+              entriesAsync,
+              oddsAsync,
+              isSubscribed: isSubscribed,
+            ),
+            _buildAiRecommendationTab(
+              context,
+              theme,
+              isSubscribed: isSubscribed,
+            ),
           ],
         ),
       ),
@@ -113,25 +193,24 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
     BuildContext context,
     ThemeData theme,
     AsyncValue entriesAsync,
-    AsyncValue oddsAsync,
-  ) {
+    AsyncValue oddsAsync, {
+    required bool isSubscribed,
+  }) {
     return SingleChildScrollView(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.fromLTRB(20, 20, 20, 36),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildPopularityRanking(theme, entriesAsync, oddsAsync),
+          if (isSubscribed) ...[
+            const SizedBox(height: 24),
+            _buildComprehensivePicks(theme, entriesAsync, oddsAsync),
+          ] else ...[
+            const SizedBox(height: 24),
+            _buildSubscriptionPaywallCard(theme),
+          ],
           const SizedBox(height: 24),
-          _buildComprehensivePicks(theme, entriesAsync, oddsAsync),
-          const SizedBox(height: 24),
-          _buildSectionTitleWithAction(
-            theme,
-            '출주표',
-            actionLabel: '결과',
-            actionIcon: Icons.emoji_events_rounded,
-            actionColor: const Color(0xFFFBBF24),
-            onAction: () => context.push('/result/$venueCode/$date/$raceNo'),
-          ),
+          _buildSectionTitle(theme, '출주표'),
           const SizedBox(height: 12),
           entriesAsync.when(
             data: (result) {
@@ -139,10 +218,12 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
               return Column(
                 children: (entries as List)
                     .cast<RaceEntry>()
-                    .map((e) => Padding(
-                          padding: const EdgeInsets.only(bottom: 10),
-                          child: EntryCard(entry: e, venueCode: venueCode),
-                        ))
+                    .map(
+                      (e) => Padding(
+                        padding: const EdgeInsets.only(bottom: 10),
+                        child: EntryCard(entry: e, venueCode: venueCode),
+                      ),
+                    )
                     .toList(),
               );
             },
@@ -162,13 +243,11 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
             context,
             icon: Icons.info_outline_rounded,
             title: '경주 정보',
-            items: [
-              '거리: 2025m',
-              '출전: 7명',
-              '배당은 실시간 변동됩니다',
-              '공공데이터 API 연동',
-            ],
+            items: ['거리: 2025m', '출전: 7명', '배당은 실시간 변동됩니다', '공공데이터 API 연동'],
           ),
+          const SizedBox(height: 18),
+          Center(child: _buildResultActionButton(context)),
+          SizedBox(height: MediaQuery.of(context).padding.bottom + 12),
         ],
       ),
     );
@@ -200,11 +279,17 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           children: [
             Row(
               children: [
-                const Icon(Icons.trending_up_rounded, size: 20, color: Color(0xFFFBBF24)),
+                const Icon(
+                  Icons.trending_up_rounded,
+                  size: 20,
+                  color: Color(0xFFFBBF24),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   '인기 순위',
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const Spacer(),
                 Text(
@@ -228,7 +313,9 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                   ],
                 ),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFFBBF24).withValues(alpha: 0.2)),
+                border: Border.all(
+                  color: const Color(0xFFFBBF24).withValues(alpha: 0.2),
+                ),
               ),
               child: Column(
                 children: sorted.asMap().entries.map((mapEntry) {
@@ -257,12 +344,16 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                       rankIcon = Icons.looks_3_rounded;
                       break;
                     default:
-                      rankColor = theme.colorScheme.onSurface.withValues(alpha: 0.4);
+                      rankColor = theme.colorScheme.onSurface.withValues(
+                        alpha: 0.4,
+                      );
                       rankIcon = null;
                   }
 
                   return Padding(
-                    padding: EdgeInsets.only(bottom: mapEntry.key < sorted.length - 1 ? 8 : 0),
+                    padding: EdgeInsets.only(
+                      bottom: mapEntry.key < sorted.length - 1 ? 8 : 0,
+                    ),
                     child: Row(
                       children: [
                         SizedBox(
@@ -284,7 +375,9 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                           width: 32,
                           height: 32,
                           decoration: BoxDecoration(
-                            color: _gradeColor(entry?.grade ?? '').withValues(alpha: 0.15),
+                            color: _gradeColor(
+                              entry?.grade ?? '',
+                            ).withValues(alpha: 0.15),
                             shape: BoxShape.circle,
                           ),
                           alignment: Alignment.center,
@@ -311,16 +404,25 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                               if (entry != null)
                                 Row(
                                   children: [
-                                    _buildMiniChip(entry.grade, _gradeColor(entry.grade)),
+                                    _buildMiniChip(
+                                      entry.grade,
+                                      _gradeColor(entry.grade),
+                                    ),
                                     const SizedBox(width: 4),
-                                    _buildMiniChip(entry.tactic, const Color(0xFF6366F1)),
+                                    _buildMiniChip(
+                                      entry.tactic,
+                                      const Color(0xFF6366F1),
+                                    ),
                                   ],
                                 ),
                             ],
                           ),
                         ),
                         Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 10,
+                            vertical: 4,
+                          ),
                           decoration: BoxDecoration(
                             color: rankColor.withValues(alpha: 0.12),
                             borderRadius: BorderRadius.circular(8),
@@ -350,7 +452,11 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           borderRadius: BorderRadius.circular(16),
         ),
         child: const Center(
-          child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2)),
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
         ),
       ),
       error: (_, __) => const SizedBox.shrink(),
@@ -366,18 +472,25 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
   ) {
     return entriesAsync.when(
       data: (result) {
-        final entries = (result is DataWithSource ? result.data : result) as List;
+        final entries =
+            (result is DataWithSource ? result.data : result) as List;
         final typed = entries.cast<RaceEntry>();
         if (typed.isEmpty) return const SizedBox.shrink();
 
         final scored = typed.map((e) {
-          const gradeScores = {'S': 10.0, 'A1': 8.5, 'A2': 7.0, 'B1': 5.5, 'B2': 4.0, 'B3': 2.5};
+          const gradeScores = {
+            'S': 10.0,
+            'A1': 8.5,
+            'A2': 7.0,
+            'B1': 5.5,
+            'B2': 4.0,
+            'B3': 2.5,
+          };
           final g = gradeScores[e.grade] ?? 4.0;
           final a = e.avgScore.clamp(0, 10).toDouble();
           final r = e.recent3Wins * 2.0;
           return (entry: e, score: g * 3.0 + a * 2.5 + r);
-        }).toList()
-          ..sort((a, b) => b.score.compareTo(a.score));
+        }).toList()..sort((a, b) => b.score.compareTo(a.score));
 
         Odds? odds;
         final oddsVal = oddsAsync.valueOrNull;
@@ -390,11 +503,17 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           children: [
             Row(
               children: [
-                const Icon(Icons.star_rounded, size: 20, color: Color(0xFF22C55E)),
+                const Icon(
+                  Icons.star_rounded,
+                  size: 20,
+                  color: Color(0xFF22C55E),
+                ),
                 const SizedBox(width: 8),
                 Text(
                   '종합 추천',
-                  style: theme.textTheme.titleMedium?.copyWith(fontWeight: FontWeight.w700),
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
                 ),
                 const Spacer(),
                 Text(
@@ -419,7 +538,9 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                   ],
                 ),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFF22C55E).withValues(alpha: 0.2)),
+                border: Border.all(
+                  color: const Color(0xFF22C55E).withValues(alpha: 0.2),
+                ),
               ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -474,19 +595,29 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                                     Flexible(
                                       child: Text(
                                         '${e.lineNo}번 ${e.riderName}',
-                                        style: theme.textTheme.bodyMedium?.copyWith(
-                                          fontWeight: FontWeight.w600,
-                                        ),
+                                        style: theme.textTheme.bodyMedium
+                                            ?.copyWith(
+                                              fontWeight: FontWeight.w600,
+                                            ),
                                         overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
                                     const SizedBox(width: 6),
-                                    _buildMiniChip(e.grade, _gradeColor(e.grade)),
+                                    _buildMiniChip(
+                                      e.grade,
+                                      _gradeColor(e.grade),
+                                    ),
                                     const SizedBox(width: 4),
-                                    _buildMiniChip(e.tactic, const Color(0xFF6366F1)),
+                                    _buildMiniChip(
+                                      e.tactic,
+                                      const Color(0xFF6366F1),
+                                    ),
                                     if (winOdds != null) ...[
                                       const SizedBox(width: 4),
-                                      _buildMiniChip('${winOdds.toStringAsFixed(1)}배', const Color(0xFFF59E0B)),
+                                      _buildMiniChip(
+                                        '${winOdds.toStringAsFixed(1)}배',
+                                        const Color(0xFFF59E0B),
+                                      ),
                                     ],
                                   ],
                                 ),
@@ -496,8 +627,12 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                                   child: LinearProgressIndicator(
                                     value: ratio,
                                     minHeight: 5,
-                                    backgroundColor: Colors.white.withValues(alpha: 0.06),
-                                    valueColor: AlwaysStoppedAnimation(color.withValues(alpha: 0.6)),
+                                    backgroundColor: Colors.white.withValues(
+                                      alpha: 0.06,
+                                    ),
+                                    valueColor: AlwaysStoppedAnimation(
+                                      color.withValues(alpha: 0.6),
+                                    ),
                                   ),
                                 ),
                               ],
@@ -507,7 +642,9 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                           Text(
                             '평균 ${e.avgScore.toStringAsFixed(1)}',
                             style: theme.textTheme.bodySmall?.copyWith(
-                              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+                              color: theme.colorScheme.onSurface.withValues(
+                                alpha: 0.6,
+                              ),
                             ),
                           ),
                         ],
@@ -517,7 +654,12 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                   const SizedBox(height: 14),
                   const Divider(height: 1),
                   const SizedBox(height: 14),
-                  _buildPickRow(theme, '단승 추천', '${top3[0].entry.lineNo}번 ${top3[0].entry.riderName}', const Color(0xFFEF4444)),
+                  _buildPickRow(
+                    theme,
+                    '단승 추천',
+                    '${top3[0].entry.lineNo}번 ${top3[0].entry.riderName}',
+                    const Color(0xFFEF4444),
+                  ),
                   const SizedBox(height: 8),
                   if (top3.length >= 2)
                     _buildPickRow(
@@ -556,7 +698,11 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           borderRadius: BorderRadius.circular(16),
         ),
         child: const Center(
-          child: SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2)),
+          child: SizedBox(
+            width: 24,
+            height: 24,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
         ),
       ),
       error: (_, __) => const SizedBox.shrink(),
@@ -574,14 +720,20 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           ),
           child: Text(
             type,
-            style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
+            style: TextStyle(
+              color: color,
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+            ),
           ),
         ),
         const SizedBox(width: 10),
         Expanded(
           child: Text(
             pick,
-            style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w600),
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w600,
+            ),
             overflow: TextOverflow.ellipsis,
           ),
         ),
@@ -598,7 +750,11 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
       ),
       child: Text(
         label,
-        style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w600),
+        style: TextStyle(
+          color: color,
+          fontSize: 10,
+          fontWeight: FontWeight.w600,
+        ),
       ),
     );
   }
@@ -615,12 +771,25 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
     };
   }
 
-  Widget _buildAiRecommendationTab(BuildContext context, ThemeData theme) {
-    final predictionAsync = ref.watch(predictionProvider((
-      venue: venueCode,
-      date: date.length == 8 ? date : _todayYmd,
-      raceNo: raceNo,
-    )));
+  Widget _buildAiRecommendationTab(
+    BuildContext context,
+    ThemeData theme, {
+    required bool isSubscribed,
+  }) {
+    if (!isSubscribed) {
+      return SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(20, 20, 20, 36),
+        child: _buildSubscriptionPaywallCard(theme),
+      );
+    }
+
+    final predictionAsync = ref.watch(
+      predictionProvider((
+        venue: venueCode,
+        date: date.length == 8 ? date : _todayYmd,
+        raceNo: raceNo,
+      )),
+    );
 
     return predictionAsync.when(
       data: (prediction) => PredictionTab(
@@ -634,9 +803,141 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
       error: (e, _) => Center(
         child: Padding(
           padding: const EdgeInsets.all(20),
-          child: Text('예측 데이터를 불러올 수 없습니다.\n$e',
-              textAlign: TextAlign.center,
-              style: theme.textTheme.bodyMedium),
+          child: Text(
+            '예측 데이터를 불러올 수 없습니다.\n$e',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildSubscriptionPaywallCard(ThemeData theme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(
+          alpha: 0.45,
+        ),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.lock_outline_rounded,
+            size: 30,
+            color: Color(0xFFF59E0B),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            'AI 추천, 종합추천은 구독 후 이용할 수 있습니다.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '결제 완료 후 앱으로 돌아오면 자동으로 잠금이 해제됩니다.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+            ),
+          ),
+          const SizedBox(height: 14),
+          Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              color: theme.colorScheme.surface.withValues(alpha: 0.35),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: theme.colorScheme.outline.withValues(alpha: 0.2),
+              ),
+            ),
+            child: Column(
+              children: [
+                _buildPlanOption(
+                  theme: theme,
+                  plan: SubscriptionPlan.monthly,
+                  subtitle: SubscriptionConstants.monthlyPriceLabel,
+                ),
+                const SizedBox(height: 10),
+                _buildPlanOption(
+                  theme: theme,
+                  plan: SubscriptionPlan.yearly,
+                  subtitle: SubscriptionConstants.yearlyPriceLabel,
+                  badge: SubscriptionConstants.yearlyDiscountLabel,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: _isSubscribing ? null : _activateSubscription,
+              icon: const Icon(Icons.workspace_premium_rounded),
+              label: _isSubscribing
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Text(
+                      '${SubscriptionConstants.planLabelFor(_selectedPlan)} ${SubscriptionConstants.subscribeButtonLabel}',
+                    ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPlanOption({
+    required ThemeData theme,
+    required SubscriptionPlan plan,
+    required String subtitle,
+    String? badge,
+  }) {
+    final isSelected = _selectedPlan == plan;
+    return InkWell(
+      borderRadius: BorderRadius.circular(10),
+      onTap: _isSubscribing
+          ? null
+          : () {
+              setState(() {
+                _selectedPlan = plan;
+              });
+            },
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+        decoration: BoxDecoration(
+          color: isSelected
+              ? const Color(0xFFF59E0B).withValues(alpha: 0.15)
+              : theme.colorScheme.surface.withValues(alpha: 0.4),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: isSelected
+                ? const Color(0xFFF59E0B).withValues(alpha: 0.7)
+                : theme.colorScheme.outline.withValues(alpha: 0.2),
+          ),
+        ),
+        child: Text(
+          badge != null
+              ? '${SubscriptionConstants.planLabelFor(plan)} $subtitle($badge)'
+              : '${SubscriptionConstants.planLabelFor(plan)} $subtitle',
+          style: theme.textTheme.titleSmall?.copyWith(
+            fontWeight: FontWeight.w700,
+            color: isSelected ? const Color(0xFFF59E0B) : null,
+          ),
         ),
       ),
     );
@@ -662,11 +963,7 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
             gradient: LinearGradient(
               begin: Alignment.topLeft,
               end: Alignment.bottomRight,
-              colors: [
-                Color(0xFF00C853),
-                Color(0xFF00A843),
-                Color(0xFF00897B),
-              ],
+              colors: [Color(0xFF00C853), Color(0xFF00A843), Color(0xFF00897B)],
             ),
           ),
         ),
@@ -674,29 +971,35 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
     );
   }
 
-  Widget _buildDateHeader(ThemeData theme) {
+  Widget _buildDateHeader(BuildContext context, ThemeData theme) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-      decoration: BoxDecoration(
-        color: theme.colorScheme.primary.withValues(alpha: 0.1),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Row(
-        children: [
-          Icon(
-            Icons.calendar_today_rounded,
-            size: 18,
-            color: theme.colorScheme.primary,
-          ),
-          const SizedBox(width: 8),
-          Text(
-            displayDate,
-            style: theme.textTheme.bodyLarge?.copyWith(
-              fontWeight: FontWeight.w600,
-              color: theme.colorScheme.onSurface,
+      color: Theme.of(context).scaffoldBackgroundColor,
+      padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: theme.colorScheme.primary.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.calendar_today_rounded,
+              size: 18,
+              color: theme.colorScheme.primary,
             ),
-          ),
-        ],
+            const SizedBox(width: 8),
+            Text(
+              displayDate,
+              style: theme.textTheme.bodyLarge?.copyWith(
+                fontWeight: FontWeight.w600,
+                color: theme.colorScheme.onSurface,
+              ),
+            ),
+            const Spacer(),
+            _buildResultActionButton(context, compact: true),
+          ],
+        ),
       ),
     );
   }
@@ -712,7 +1015,9 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
               icon: const Icon(Icons.play_arrow_rounded, size: 18),
               label: const Text('전체재생'),
               style: OutlinedButton.styleFrom(
-                foregroundColor: theme.colorScheme.onSurface.withValues(alpha: 0.8),
+                foregroundColor: theme.colorScheme.onSurface.withValues(
+                  alpha: 0.8,
+                ),
                 side: BorderSide(
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
                 ),
@@ -731,9 +1036,7 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
               label: const Text('경주영상'),
               style: OutlinedButton.styleFrom(
                 foregroundColor: const Color(0xFFF59E0B),
-                side: const BorderSide(
-                  color: Color(0xFFF59E0B),
-                ),
+                side: const BorderSide(color: Color(0xFFF59E0B)),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
                 ),
@@ -756,51 +1059,75 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
     );
   }
 
-  Widget _buildSectionTitleWithAction(
-    ThemeData theme,
-    String title, {
-    required String actionLabel,
-    required IconData actionIcon,
-    required Color actionColor,
-    required VoidCallback onAction,
+  Widget _buildResultActionButton(
+    BuildContext context, {
+    bool compact = false,
   }) {
-    return Row(
-      children: [
-        Text(
-          title,
-          style: theme.textTheme.titleLarge?.copyWith(
-            fontWeight: FontWeight.w700,
-            letterSpacing: -0.3,
-          ),
+    const actionColor = Color(0xFFFBBF24);
+    final horizontal = compact ? 12.0 : 22.0;
+    final vertical = compact ? 6.0 : 11.0;
+    final iconSize = compact ? 16.0 : 20.0;
+    final fontSize = compact ? 13.0 : 16.0;
+
+    return GestureDetector(
+      onTap: () => context.push('/result/$venueCode/$date/$raceNo'),
+      child: Container(
+        constraints: compact ? null : const BoxConstraints(minWidth: 150),
+        padding: EdgeInsets.symmetric(
+          horizontal: horizontal,
+          vertical: vertical,
         ),
-        const Spacer(),
-        GestureDetector(
-          onTap: onAction,
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-            decoration: BoxDecoration(
-              color: actionColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: actionColor.withValues(alpha: 0.3)),
-            ),
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(actionIcon, size: 16, color: actionColor),
-                const SizedBox(width: 4),
-                Text(
-                  actionLabel,
-                  style: TextStyle(
+        decoration: BoxDecoration(
+          color: actionColor.withValues(alpha: 0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: actionColor.withValues(alpha: 0.3)),
+        ),
+        child: compact
+            ? Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Icon(
+                    Icons.emoji_events_rounded,
+                    size: iconSize,
                     color: actionColor,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
                   ),
+                  const SizedBox(width: 6),
+                  Text(
+                    '결과',
+                    style: TextStyle(
+                      color: actionColor,
+                      fontSize: fontSize,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ],
+              )
+            : SizedBox(
+                width: 150,
+                child: Stack(
+                  alignment: Alignment.center,
+                  children: [
+                    Text(
+                      '결과',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        color: actionColor,
+                        fontSize: fontSize,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                    Positioned(
+                      left: 0,
+                      child: Icon(
+                        Icons.emoji_events_rounded,
+                        size: iconSize,
+                        color: actionColor,
+                      ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
-          ),
-        ),
-      ],
+              ),
+      ),
     );
   }
 
@@ -834,7 +1161,9 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
     return Container(
       padding: const EdgeInsets.all(20),
       decoration: BoxDecoration(
-        color: Theme.of(context).colorScheme.errorContainer.withValues(alpha: 0.3),
+        color: Theme.of(
+          context,
+        ).colorScheme.errorContainer.withValues(alpha: 0.3),
         borderRadius: BorderRadius.circular(12),
       ),
       child: Row(
@@ -894,27 +1223,26 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
             ],
           ),
           const SizedBox(height: 14),
-          ...items.map((item) => Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      '•',
-                      style: theme.textTheme.bodyMedium?.copyWith(
-                        color: theme.colorScheme.primary,
-                      ),
+          ...items.map(
+            (item) => Padding(
+              padding: const EdgeInsets.only(bottom: 6),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    '•',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.primary,
                     ),
-                    const SizedBox(width: 8),
-                    Expanded(
-                      child: Text(
-                        item,
-                        style: theme.textTheme.bodyMedium,
-                      ),
-                    ),
-                  ],
-                ),
-              )),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(item, style: theme.textTheme.bodyMedium),
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -947,5 +1275,32 @@ class _SliverTabBarDelegate extends SliverPersistentHeaderDelegate {
   @override
   bool shouldRebuild(covariant _SliverTabBarDelegate oldDelegate) {
     return tabBar != oldDelegate.tabBar;
+  }
+}
+
+class _SliverFixedHeaderDelegate extends SliverPersistentHeaderDelegate {
+  final double height;
+  final Widget child;
+
+  _SliverFixedHeaderDelegate({required this.height, required this.child});
+
+  @override
+  double get minExtent => height;
+
+  @override
+  double get maxExtent => height;
+
+  @override
+  Widget build(
+    BuildContext context,
+    double shrinkOffset,
+    bool overlapsContent,
+  ) {
+    return child;
+  }
+
+  @override
+  bool shouldRebuild(covariant _SliverFixedHeaderDelegate oldDelegate) {
+    return oldDelegate.height != height || oldDelegate.child != child;
   }
 }

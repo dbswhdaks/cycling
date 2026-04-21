@@ -5,6 +5,7 @@ import '../features/race/screens/race_detail_screen.dart';
 import '../features/race/screens/race_result_screen.dart';
 import '../features/rider/screens/rider_detail_screen.dart';
 import '../features/settings/screens/api_settings_screen.dart';
+import '../features/subscription/screens/subscription_screen.dart';
 import '../features/video/screens/race_video_screen.dart';
 import '../features/video/screens/video_player_screen.dart';
 import '../models/race_video.dart';
@@ -15,10 +16,7 @@ final appRouter = GoRouter(
   navigatorKey: _rootNavigatorKey,
   initialLocation: '/',
   routes: [
-    GoRoute(
-      path: '/',
-      builder: (context, state) => const HomeScreen(),
-    ),
+    GoRoute(path: '/', builder: (context, state) => const HomeScreen()),
     GoRoute(
       path: '/race/:venue/:date/:raceNo',
       builder: (context, state) {
@@ -59,6 +57,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/settings',
       builder: (context, state) => const ApiSettingsScreen(),
+    ),
+    GoRoute(
+      path: '/subscription',
+      builder: (context, state) => const SubscriptionScreen(),
     ),
     GoRoute(
       path: '/video',
