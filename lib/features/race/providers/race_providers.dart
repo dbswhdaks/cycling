@@ -1,11 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 import '../../../core/constants/api_constants.dart';
+import '../../../core/constants/iap_constants.dart';
 import '../../../core/data/mock_data.dart';
 import '../../../core/services/cycling_api_service.dart';
 import '../../../core/services/prediction_engine.dart';
 import '../../../core/services/supabase_backup_service.dart';
+import '../../../features/subscription/providers/in_app_purchase_provider.dart';
 import '../../../models/race.dart';
 import '../../../models/race_entry.dart';
 import '../../../models/race_result.dart';
@@ -30,41 +31,13 @@ final selectedDateProvider = StateProvider<DateTime>((ref) {
   return DateTime(now.year, now.month, now.day);
 });
 
-/// 현재 로그인 사용자의 구독 활성 여부
-/// 활성 조건: status == active && expires_at > now()
-final isSubscribedProvider = FutureProvider<bool>((ref) async {
-  final client = Supabase.instance.client;
-  final user = client.auth.currentUser;
-  if (user == null) return false;
-
-  try {
-    final response = await client
-        .from('subscriptions')
-        .select('status, expires_at')
-        .eq('user_id', user.id);
-
-    final rows = (response as List).cast<Map<String, dynamic>>();
-    final nowUtc = DateTime.now().toUtc();
-
-    for (final row in rows) {
-      final status = (row['status'] ?? '').toString().toLowerCase();
-      final expiresRaw = row['expires_at']?.toString();
-      final expiresAt = expiresRaw != null
-          ? DateTime.tryParse(expiresRaw)?.toUtc()
-          : null;
-
-      if (status == 'active' &&
-          expiresAt != null &&
-          expiresAt.isAfter(nowUtc)) {
-        return true;
-      }
-    }
-
-    return false;
-  } catch (e) {
-    if (kDebugMode) debugPrint('[Provider] subscriptions 조회 실패: $e');
-    return false;
-  }
+/// 인앱결제(Google Play) 기반 구독 활성 여부
+/// 활성 조건: 보유 productId 중 하나가 subscriptionProductIds에 포함
+final isSubscribedProvider = Provider<bool>((ref) {
+  final iapState = ref.watch(inAppPurchaseProvider);
+  return iapState.purchasedProductIds.any(
+    IapConstants.subscriptionProductIds.contains,
+  );
 });
 
 /// API 호출 결과와 데이터 소스를 함께 전달

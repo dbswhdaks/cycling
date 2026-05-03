@@ -60,7 +60,11 @@ final appRouter = GoRouter(
     ),
     GoRoute(
       path: '/subscription',
-      builder: (context, state) => const SubscriptionScreen(),
+      builder: (context, state) => SubscriptionScreen(
+        initialProductId: state.uri.queryParameters['plan'] == 'premium_yearly'
+            ? 'premium_yearly'
+            : 'premium_monthly',
+      ),
     ),
     GoRoute(
       path: '/video',

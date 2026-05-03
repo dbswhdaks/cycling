@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
-import '../../../core/constants/subscription_constants.dart';
+import '../../../core/constants/api_constants.dart';
 import '../../../models/race_entry.dart';
 import '../../../models/odds.dart';
-import '../../../core/constants/api_constants.dart';
 import '../providers/race_providers.dart';
 import '../widgets/entry_card.dart';
+import '../widgets/number_recommender.dart';
 import '../widgets/odds_panel.dart';
 import '../widgets/prediction_tab.dart';
 
@@ -27,20 +26,18 @@ class RaceDetailScreen extends ConsumerStatefulWidget {
   ConsumerState<RaceDetailScreen> createState() => _RaceDetailScreenState();
 }
 
+enum _PaywallPlan { monthly, yearly }
+
 class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late TabController _tabController;
-  bool _isSubscribing = false;
-  SubscriptionPlan _selectedPlan = SubscriptionPlan.monthly;
+  _PaywallPlan _selectedPlan = _PaywallPlan.monthly;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _tabController = TabController(length: 2, vsync: this);
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) ref.invalidate(isSubscribedProvider);
-    });
   }
 
   @override
@@ -50,55 +47,11 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
     super.dispose();
   }
 
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) {
-      ref.invalidate(isSubscribedProvider);
-    }
-  }
-
-  Future<void> _activateSubscription() async {
-    if (_isSubscribing) return;
-
-    final client = Supabase.instance.client;
-    final user = client.auth.currentUser;
-    if (user == null) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('로그인 후 구독할 수 있습니다.')));
-      return;
-    }
-
-    setState(() => _isSubscribing = true);
-    try {
-      final periodDays = SubscriptionConstants.periodDaysFor(_selectedPlan);
-      final response = await client.functions.invoke(
-        SubscriptionConstants.activateSubscriptionFunctionName,
-        body: {
-          'plan': SubscriptionConstants.dbPlanValueFor(_selectedPlan),
-          'period_days': periodDays,
-        },
-      );
-      if (response.status != 200 && response.status != 201) {
-        throw Exception('activate-subscription failed: ${response.status}');
-      }
-
-      if (!mounted) return;
-      ref.invalidate(isSubscribedProvider);
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('구독이 활성화되었습니다.')));
-    } catch (_) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('결제 처리 중 오류가 발생했습니다. 다시 시도해 주세요.')),
-      );
-    } finally {
-      if (mounted) {
-        setState(() => _isSubscribing = false);
-      }
-    }
+  void _goToSubscription() {
+    final plan = _selectedPlan == _PaywallPlan.yearly
+        ? 'premium_yearly'
+        : 'premium_monthly';
+    context.push('/subscription?plan=$plan');
   }
 
   int get venueCode => widget.venueCode;
@@ -117,8 +70,7 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final isSubscribedAsync = ref.watch(isSubscribedProvider);
-    final isSubscribed = isSubscribedAsync.valueOrNull ?? false;
+    final isSubscribed = ref.watch(isSubscribedProvider);
     final entriesAsync = ref.watch(
       raceEntriesProvider((
         venue: venueCode,
@@ -145,7 +97,17 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
               child: _buildDateHeader(context, theme),
             ),
           ),
-          SliverToBoxAdapter(child: _buildVideoButtons(context, theme)),
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10),
+              child: NumberRecommender(
+                venueCode: venueCode,
+                date: date.length == 8 ? date : _todayYmd,
+                raceNo: raceNo,
+                horizontalMargin: 16,
+              ),
+            ),
+          ),
           SliverPersistentHeader(
             pinned: true,
             delegate: _SliverTabBarDelegate(
@@ -202,13 +164,8 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           _buildPopularityRanking(theme, entriesAsync, oddsAsync),
-          if (isSubscribed) ...[
-            const SizedBox(height: 24),
-            _buildComprehensivePicks(theme, entriesAsync, oddsAsync),
-          ] else ...[
-            const SizedBox(height: 24),
-            _buildSubscriptionPaywallCard(theme),
-          ],
+          const SizedBox(height: 24),
+          _buildComprehensivePicks(theme, entriesAsync, oddsAsync),
           const SizedBox(height: 24),
           _buildSectionTitle(theme, '출주표'),
           const SizedBox(height: 12),
@@ -814,6 +771,10 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
   }
 
   Widget _buildSubscriptionPaywallCard(ThemeData theme) {
+    final actionLabel = _selectedPlan == _PaywallPlan.monthly
+        ? '월간 구독 결제'
+        : '연간 구독 결제';
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(18),
@@ -836,7 +797,7 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           ),
           const SizedBox(height: 10),
           Text(
-            'AI 추천, 종합추천은 구독 후 이용할 수 있습니다.',
+            'AI 추천은 구독 후 이용할 수 있습니다.',
             textAlign: TextAlign.center,
             style: theme.textTheme.titleMedium?.copyWith(
               fontWeight: FontWeight.w700,
@@ -865,15 +826,14 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
               children: [
                 _buildPlanOption(
                   theme: theme,
-                  plan: SubscriptionPlan.monthly,
-                  subtitle: SubscriptionConstants.monthlyPriceLabel,
+                  plan: _PaywallPlan.monthly,
+                  label: '월간 ￦ 9,900원',
                 ),
                 const SizedBox(height: 10),
                 _buildPlanOption(
                   theme: theme,
-                  plan: SubscriptionPlan.yearly,
-                  subtitle: SubscriptionConstants.yearlyPriceLabel,
-                  badge: SubscriptionConstants.yearlyDiscountLabel,
+                  plan: _PaywallPlan.yearly,
+                  label: '연간 ￦ 99,000원 (17% 절약)',
                 ),
               ],
             ),
@@ -882,17 +842,9 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           SizedBox(
             width: double.infinity,
             child: FilledButton.icon(
-              onPressed: _isSubscribing ? null : _activateSubscription,
+              onPressed: _goToSubscription,
               icon: const Icon(Icons.workspace_premium_rounded),
-              label: _isSubscribing
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : Text(
-                      '${SubscriptionConstants.planLabelFor(_selectedPlan)} ${SubscriptionConstants.subscribeButtonLabel}',
-                    ),
+              label: Text(actionLabel),
             ),
           ),
         ],
@@ -902,20 +854,17 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
 
   Widget _buildPlanOption({
     required ThemeData theme,
-    required SubscriptionPlan plan,
-    required String subtitle,
-    String? badge,
+    required _PaywallPlan plan,
+    required String label,
   }) {
     final isSelected = _selectedPlan == plan;
     return InkWell(
       borderRadius: BorderRadius.circular(10),
-      onTap: _isSubscribing
-          ? null
-          : () {
-              setState(() {
-                _selectedPlan = plan;
-              });
-            },
+      onTap: () {
+        setState(() {
+          _selectedPlan = plan;
+        });
+      },
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
@@ -931,9 +880,7 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           ),
         ),
         child: Text(
-          badge != null
-              ? '${SubscriptionConstants.planLabelFor(plan)} $subtitle($badge)'
-              : '${SubscriptionConstants.planLabelFor(plan)} $subtitle',
+          label,
           style: theme.textTheme.titleSmall?.copyWith(
             fontWeight: FontWeight.w700,
             color: isSelected ? const Color(0xFFF59E0B) : null,
@@ -1000,51 +947,6 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
             _buildResultActionButton(context, compact: true),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildVideoButtons(BuildContext context, ThemeData theme) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      child: Row(
-        children: [
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () => context.push('/video'),
-              icon: const Icon(Icons.play_arrow_rounded, size: 18),
-              label: const Text('전체재생'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: theme.colorScheme.onSurface.withValues(
-                  alpha: 0.8,
-                ),
-                side: BorderSide(
-                  color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: OutlinedButton.icon(
-              onPressed: () => context.push('/video'),
-              icon: const Icon(Icons.play_circle_outline_rounded, size: 18),
-              label: const Text('경주영상'),
-              style: OutlinedButton.styleFrom(
-                foregroundColor: const Color(0xFFF59E0B),
-                side: const BorderSide(color: Color(0xFFF59E0B)),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                padding: const EdgeInsets.symmetric(vertical: 12),
-              ),
-            ),
-          ),
-        ],
       ),
     );
   }

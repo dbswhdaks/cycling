@@ -926,6 +926,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
   ) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
+    final isSubscribed = ref.watch(isSubscribedProvider);
 
     final actual = [
       (lineNo: result.firstNo, name: result.first),
@@ -965,28 +966,80 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
           ],
         ),
         const SizedBox(height: 14),
-        Container(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(
-              color: isDark ? const Color(0xFF30363D) : Colors.grey.withValues(alpha: 0.2),
+        if (!isSubscribed)
+          _buildComparisonPaywallCard(theme)
+        else
+          Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: isDark ? const Color(0xFF30363D) : Colors.grey.withValues(alpha: 0.2),
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Column(
+              children: [
+                _compHeaderRow(theme, isDark),
+                ...List.generate(3, (i) => _compDataRow(
+                  theme, isDark, i,
+                  actual: actual[i],
+                  ai: aiTop3.length > i ? aiTop3[i] : null,
+                  comp: compTop3.length > i ? compTop3[i] : null,
+                )),
+                _compSummaryRow(theme, isDark, aiHits: aiHits, compHits: compHits),
+              ],
             ),
           ),
-          clipBehavior: Clip.antiAlias,
-          child: Column(
-            children: [
-              _compHeaderRow(theme, isDark),
-              ...List.generate(3, (i) => _compDataRow(
-                theme, isDark, i,
-                actual: actual[i],
-                ai: aiTop3.length > i ? aiTop3[i] : null,
-                comp: compTop3.length > i ? compTop3[i] : null,
-              )),
-              _compSummaryRow(theme, isDark, aiHits: aiHits, compHits: compHits),
-            ],
-          ),
-        ),
       ],
+    );
+  }
+
+  Widget _buildComparisonPaywallCard(ThemeData theme) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.45),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          const Icon(
+            Icons.lock_outline_rounded,
+            size: 30,
+            color: Color(0xFF8B5CF6),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            '추천 vs 실제 비교는 구독 후 이용할 수 있습니다.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '결제 완료 후 앱으로 돌아오면 자동으로 잠금이 해제됩니다.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+            ),
+          ),
+          const SizedBox(height: 14),
+          SizedBox(
+            width: double.infinity,
+            child: FilledButton.icon(
+              onPressed: () => context.push('/subscription'),
+              icon: const Icon(Icons.workspace_premium_rounded),
+              label: const Text('구독하고 비교 보기'),
+            ),
+          ),
+        ],
+      ),
     );
   }
 
