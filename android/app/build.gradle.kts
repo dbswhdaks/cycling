@@ -122,6 +122,15 @@ android {
     }
 
     buildTypes {
+        debug {
+            // debug 빌드에서도 release 키가 있으면 release 키로 서명한다.
+            // (Play Console SHA-1과 매칭되어야 인앱결제 상품 정보를 받아올 수 있음)
+            signingConfig = if (hasReleaseSigning) {
+                signingConfigs.getByName("release")
+            } else {
+                signingConfigs.getByName("debug")
+            }
+        }
         release {
             signingConfig = if (hasReleaseSigning) {
                 signingConfigs.getByName("release")

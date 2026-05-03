@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/api_constants.dart';
+import '../../../core/constants/iap_constants.dart';
 import '../../../models/race_entry.dart';
 import '../../../models/odds.dart';
 import '../providers/race_providers.dart';
@@ -52,8 +53,8 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
 
   void _goToSubscription() {
     final plan = _selectedPlan == _PaywallPlan.yearly
-        ? 'premium_yearly'
-        : 'premium_monthly';
+        ? IapConstants.yearlyProductId
+        : IapConstants.monthlyProductId;
     context.push('/subscription?plan=$plan');
   }
 
@@ -1010,8 +1011,9 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
     BuildContext context, {
     bool compact = false,
   }) {
-    final raceListAsync =
-        ref.watch(raceListProvider((venue: venueCode, date: date)));
+    final raceListAsync = ref.watch(
+      raceListProvider((venue: venueCode, date: date)),
+    );
     final currentRace = raceListAsync.valueOrNull?.data
         .where((r) => r.raceNo == raceNo)
         .firstOrNull;

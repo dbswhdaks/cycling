@@ -8,7 +8,7 @@ import '../providers/in_app_purchase_provider.dart';
 class SubscriptionScreen extends ConsumerStatefulWidget {
   const SubscriptionScreen({
     super.key,
-    this.initialProductId = 'premium_monthly',
+    this.initialProductId = IapConstants.monthlyProductId,
   });
 
   final String initialProductId;
@@ -24,9 +24,9 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
   @override
   void initState() {
     super.initState();
-    _selectedProductId = widget.initialProductId == 'premium_yearly'
-        ? 'premium_yearly'
-        : 'premium_monthly';
+    _selectedProductId = widget.initialProductId == IapConstants.yearlyProductId
+        ? IapConstants.yearlyProductId
+        : IapConstants.monthlyProductId;
   }
 
   Future<void> _openPlayPaymentMethods(BuildContext context) async {
@@ -84,7 +84,7 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
     final iapState = ref.watch(inAppPurchaseProvider);
     final notifier = ref.read(inAppPurchaseProvider.notifier);
     final productMap = {for (final p in iapState.products) p.id: p};
-    final isMonthly = _selectedProductId == 'premium_monthly';
+    final isMonthly = _selectedProductId == IapConstants.monthlyProductId;
     final isPending = iapState.isPurchasePending;
     final actionText = isMonthly ? '월간 구독 결제' : '연간 구독 결제';
     final hasSubscription = iapState.purchasedProductIds.any(
@@ -99,13 +99,13 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
     }
 
     String monthlyText() {
-      final monthly = productMap['premium_monthly'];
+      final monthly = productMap[IapConstants.monthlyProductId];
       if (monthly != null) return '월간 ${formatPriceSpacing(monthly.price)}';
       return '월간 ￦ 9,900원';
     }
 
     String yearlyText() {
-      final yearly = productMap['premium_yearly'];
+      final yearly = productMap[IapConstants.yearlyProductId];
       if (yearly != null) {
         return '연간 ${formatPriceSpacing(yearly.price)} (17% 절약)';
       }
@@ -178,15 +178,17 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                   _PlanOptionTile(
                     selected: isMonthly,
                     label: monthlyText(),
-                    onTap: () =>
-                        setState(() => _selectedProductId = 'premium_monthly'),
+                    onTap: () => setState(
+                      () => _selectedProductId = IapConstants.monthlyProductId,
+                    ),
                   ),
                   const SizedBox(height: 10),
                   _PlanOptionTile(
                     selected: !isMonthly,
                     label: yearlyText(),
-                    onTap: () =>
-                        setState(() => _selectedProductId = 'premium_yearly'),
+                    onTap: () => setState(
+                      () => _selectedProductId = IapConstants.yearlyProductId,
+                    ),
                   ),
                 ],
               ),
@@ -236,8 +238,9 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                 minimumSize: const Size.fromHeight(50),
                 backgroundColor: const Color(0xFFB45309),
                 foregroundColor: Colors.white,
-                disabledBackgroundColor: const Color(0xFFB45309)
-                    .withValues(alpha: 0.4),
+                disabledBackgroundColor: const Color(
+                  0xFFB45309,
+                ).withValues(alpha: 0.4),
                 disabledForegroundColor: Colors.white.withValues(alpha: 0.6),
                 elevation: 0,
                 textStyle: const TextStyle(

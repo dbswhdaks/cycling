@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import '../core/constants/iap_constants.dart';
 import '../features/home/screens/home_screen.dart';
 import '../features/race/screens/race_detail_screen.dart';
 import '../features/race/screens/race_result_screen.dart';
@@ -61,9 +62,10 @@ final appRouter = GoRouter(
     GoRoute(
       path: '/subscription',
       builder: (context, state) => SubscriptionScreen(
-        initialProductId: state.uri.queryParameters['plan'] == 'premium_yearly'
-            ? 'premium_yearly'
-            : 'premium_monthly',
+        initialProductId:
+            state.uri.queryParameters['plan'] == IapConstants.yearlyProductId
+            ? IapConstants.yearlyProductId
+            : IapConstants.monthlyProductId,
       ),
     ),
     GoRoute(

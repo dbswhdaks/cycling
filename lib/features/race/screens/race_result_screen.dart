@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../models/race_entry.dart';
 import '../../../models/race_result.dart';
@@ -30,9 +31,14 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
   bool _isRefreshing = false;
   int _refreshCount = 0;
 
+  /// 사용자가 저장한 "나의 선택" 번호 (1~3착까지 비교용).
+  List<int?> _userPicks = List.filled(3, null);
+
   int get venueCode => widget.venueCode;
   String get date => widget.date;
   int get raceNo => widget.raceNo;
+
+  String get _userPicksKey => 'picks_${venueCode}_${date}_$raceNo';
 
   String get venueName => ApiConstants.venueName(venueCode);
 
@@ -86,6 +92,19 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
   void initState() {
     super.initState();
     _startAutoRefreshIfNeeded();
+    _loadUserPicks();
+  }
+
+  Future<void> _loadUserPicks() async {
+    final prefs = await SharedPreferences.getInstance();
+    final saved = prefs.getStringList(_userPicksKey);
+    if (!mounted) return;
+    if (saved == null) return;
+    final loaded = List<int?>.filled(3, null);
+    for (var i = 0; i < saved.length && i < 3; i++) {
+      loaded[i] = int.tryParse(saved[i]);
+    }
+    setState(() => _userPicks = loaded);
   }
 
   @override
@@ -147,66 +166,69 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     }
 
     return Scaffold(
-      body: CustomScrollView(
-        slivers: [
-          _buildAppBar(context, isNotYet: isNotYet),
-          SliverToBoxAdapter(
-            child: Padding(
-              padding: const EdgeInsets.all(20),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildDateHeader(context, isNotYet: isNotYet),
-                  const SizedBox(height: 24),
-                  if (isNotYet)
-                    _buildNotYetSection(context)
-                  else
-                    rankAsync.when(
-                      data: (ranks) {
-                        final unified = _unifiedResult(ranks, resultAsync.valueOrNull);
-                        return Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildPodium(context, unified),
-                            const SizedBox(height: 28),
-                            _buildComparisonSection(
-                              context, unified, predictionAsync, entriesAsync,
-                            ),
-                            const SizedBox(height: 28),
-                            _buildOddsResult(context, unified, oddsAsync),
-                            const SizedBox(height: 28),
-                            _buildRankingList(context, ranks),
-                          ],
-                        );
-                      },
-                      loading: () => _buildLoadingBox(400),
-                      error: (_, __) => resultAsync.when(
-                        data: (result) => Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            _buildPodium(context, result),
-                            const SizedBox(height: 28),
-                            _buildComparisonSection(
-                              context, result, predictionAsync, entriesAsync,
-                            ),
-                            const SizedBox(height: 28),
-                            _buildOddsResult(context, result, oddsAsync),
-                            const SizedBox(height: 28),
-                            _buildRankingFromResult(context, result),
-                          ],
+      body: SafeArea(
+        top: false,
+        child: CustomScrollView(
+          slivers: [
+            _buildAppBar(context, isNotYet: isNotYet),
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    _buildDateHeader(context, isNotYet: isNotYet),
+                    const SizedBox(height: 24),
+                    if (isNotYet)
+                      _buildNotYetSection(context)
+                    else
+                      rankAsync.when(
+                        data: (ranks) {
+                          final unified = _unifiedResult(ranks, resultAsync.valueOrNull);
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildPodium(context, unified),
+                              const SizedBox(height: 28),
+                              _buildComparisonSection(
+                                context, unified, predictionAsync, entriesAsync,
+                              ),
+                              const SizedBox(height: 28),
+                              _buildOddsResult(context, unified, oddsAsync),
+                              const SizedBox(height: 28),
+                              _buildRankingList(context, ranks),
+                            ],
+                          );
+                        },
+                        loading: () => _buildLoadingBox(400),
+                        error: (_, __) => resultAsync.when(
+                          data: (result) => Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              _buildPodium(context, result),
+                              const SizedBox(height: 28),
+                              _buildComparisonSection(
+                                context, result, predictionAsync, entriesAsync,
+                              ),
+                              const SizedBox(height: 28),
+                              _buildOddsResult(context, result, oddsAsync),
+                              const SizedBox(height: 28),
+                              _buildRankingFromResult(context, result),
+                            ],
+                          ),
+                          loading: () => _buildLoadingBox(200),
+                          error: (_, __) => _buildErrorBox(context, '결과를 불러올 수 없습니다'),
                         ),
-                        loading: () => _buildLoadingBox(200),
-                        error: (_, __) => _buildErrorBox(context, '결과를 불러올 수 없습니다'),
                       ),
-                    ),
-                  const SizedBox(height: 24),
-                  _buildDisclaimer(context),
-                  const SizedBox(height: 24),
-                ],
+                    const SizedBox(height: 24),
+                    _buildDisclaimer(context),
+                    const SizedBox(height: 24),
+                  ],
+                ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
@@ -968,15 +990,20 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     }
 
     final compTop3 = _comprehensiveTop3(entriesAsync);
+    final userTop3 = _userTop3(entriesAsync);
 
-    if (aiTop3.isEmpty && compTop3.isEmpty) return const SizedBox.shrink();
+    if (aiTop3.isEmpty && compTop3.isEmpty && userTop3.isEmpty) {
+      return const SizedBox.shrink();
+    }
 
     int aiHits = 0;
     int compHits = 0;
+    int userHits = 0;
     for (int i = 0; i < 3; i++) {
       final actualNo = actual[i].lineNo;
-      if (aiTop3.length > i && aiTop3.any((r) => r.lineNo == actualNo)) aiHits++;
-      if (compTop3.length > i && compTop3.any((r) => r.lineNo == actualNo)) compHits++;
+      if (aiTop3.any((r) => r.lineNo == actualNo)) aiHits++;
+      if (compTop3.any((r) => r.lineNo == actualNo)) compHits++;
+      if (userTop3.any((r) => r != null && r.lineNo == actualNo)) userHits++;
     }
 
     return Column(
@@ -1012,13 +1039,42 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
                   actual: actual[i],
                   ai: aiTop3.length > i ? aiTop3[i] : null,
                   comp: compTop3.length > i ? compTop3[i] : null,
+                  user: userTop3.length > i ? userTop3[i] : null,
                 )),
-                _compSummaryRow(theme, isDark, aiHits: aiHits, compHits: compHits),
+                _compSummaryRow(
+                  theme,
+                  isDark,
+                  aiHits: aiHits,
+                  compHits: compHits,
+                  userHits: userHits,
+                ),
               ],
             ),
           ),
       ],
     );
+  }
+
+  /// SharedPreferences 에 저장된 "나의 선택"을 1~3착 순서로 반환.
+  /// 해당 슬롯이 비어있으면 `null`.
+  List<({int lineNo, String name})?> _userTop3(AsyncValue entriesAsync) {
+    final val = entriesAsync.valueOrNull;
+    List<RaceEntry> entries = const [];
+    if (val != null) {
+      final list = (val is DataWithSource ? val.data : val) as List;
+      entries = list.cast<RaceEntry>();
+    }
+
+    return List.generate(3, (i) {
+      final no = _userPicks.length > i ? _userPicks[i] : null;
+      if (no == null) return null;
+      final name = entries
+              .where((e) => e.lineNo == no)
+              .firstOrNull
+              ?.riderName ??
+          '';
+      return (lineNo: no, name: name);
+    });
   }
 
   Widget _buildComparisonPaywallCard(ThemeData theme) {
@@ -1081,11 +1137,11 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
 
   Widget _compHeaderRow(ThemeData theme, bool isDark) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       color: isDark ? Colors.white.withValues(alpha: 0.05) : Colors.grey.withValues(alpha: 0.06),
       child: Row(
         children: [
-          const SizedBox(width: 30, child: Text('')),
+          const SizedBox(width: 28, child: Text('')),
           Expanded(
             child: Center(
               child: Text('실제 결과', style: _compHeaderStyle(theme, const Color(0xFFFBBF24))),
@@ -1101,13 +1157,18 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
               child: Text('종합추천', style: _compHeaderStyle(theme, const Color(0xFF22C55E))),
             ),
           ),
+          Expanded(
+            child: Center(
+              child: Text('나의 선택', style: _compHeaderStyle(theme, const Color(0xFFFFD700))),
+            ),
+          ),
         ],
       ),
     );
   }
 
   TextStyle _compHeaderStyle(ThemeData theme, Color color) {
-    return TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w700);
+    return TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700);
   }
 
   Widget _compDataRow(
@@ -1117,6 +1178,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     required ({int lineNo, String name}) actual,
     ({int lineNo, String name})? ai,
     ({int lineNo, String name})? comp,
+    ({int lineNo, String name})? user,
   }) {
     const rankLabels = ['1착', '2착', '3착'];
     const rankColors = [Color(0xFFFBBF24), Color(0xFFA3A3A3), Color(0xFFCD7F32)];
@@ -1124,9 +1186,10 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
 
     final aiMatch = ai != null && ai.lineNo == actual.lineNo;
     final compMatch = comp != null && comp.lineNo == actual.lineNo;
+    final userMatch = user != null && user.lineNo == actual.lineNo;
 
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
       decoration: BoxDecoration(
         border: Border(
           bottom: BorderSide(
@@ -1137,7 +1200,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
       child: Row(
         children: [
           SizedBox(
-            width: 30,
+            width: 28,
             child: Container(
               width: 24,
               height: 24,
@@ -1156,75 +1219,97 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
           Expanded(
             child: ai != null
                 ? _compCell(theme, ai.lineNo, ai.name, const Color(0xFF8B5CF6), aiMatch)
-                : Center(child: Text('-', style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.3)))),
+                : _compEmptyCell(theme),
           ),
           Expanded(
             child: comp != null
                 ? _compCell(theme, comp.lineNo, comp.name, const Color(0xFF22C55E), compMatch)
-                : Center(child: Text('-', style: TextStyle(color: theme.colorScheme.onSurface.withValues(alpha: 0.3)))),
+                : _compEmptyCell(theme),
+          ),
+          Expanded(
+            child: user != null
+                ? _compCell(theme, user.lineNo, user.name, const Color(0xFFFFD700), userMatch)
+                : _compEmptyCell(theme),
           ),
         ],
       ),
     );
   }
 
-  Widget _compCell(ThemeData theme, int lineNo, String name, Color color, bool isMatch) {
-    return Column(
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Container(
-              width: 22,
-              height: 22,
-              decoration: BoxDecoration(
-                color: color.withValues(alpha: 0.15),
-                shape: BoxShape.circle,
-              ),
-              alignment: Alignment.center,
-              child: Text(
-                '$lineNo',
-                style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700),
-              ),
-            ),
-            const SizedBox(width: 4),
-            Flexible(
-              child: Text(
-                name.isNotEmpty ? name : '$lineNo번',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  fontWeight: FontWeight.w600,
-                  fontSize: 11,
-                ),
-                overflow: TextOverflow.ellipsis,
-              ),
-            ),
-            if (isMatch) ...[
-              const SizedBox(width: 2),
-              const Icon(Icons.check_circle_rounded, size: 12, color: Color(0xFF22C55E)),
-            ],
-          ],
+  Widget _compEmptyCell(ThemeData theme) {
+    return Center(
+      child: Text(
+        '-',
+        style: TextStyle(
+          color: theme.colorScheme.onSurface.withValues(alpha: 0.3),
         ),
+      ),
+    );
+  }
+
+  Widget _compCell(ThemeData theme, int lineNo, String name, Color color, bool isMatch) {
+    final displayName = name.isNotEmpty ? name : '$lineNo번';
+    return Row(
+      mainAxisAlignment: MainAxisAlignment.center,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 20,
+          height: 20,
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.15),
+            shape: BoxShape.circle,
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            '$lineNo',
+            style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700),
+          ),
+        ),
+        const SizedBox(width: 3),
+        Flexible(
+          child: Text(
+            displayName,
+            style: theme.textTheme.bodySmall?.copyWith(
+              fontWeight: FontWeight.w600,
+              fontSize: 10,
+            ),
+            overflow: TextOverflow.ellipsis,
+          ),
+        ),
+        if (isMatch) ...[
+          const SizedBox(width: 1),
+          const Icon(Icons.check_circle_rounded, size: 11, color: Color(0xFF22C55E)),
+        ],
       ],
     );
   }
 
-  Widget _compSummaryRow(ThemeData theme, bool isDark, {required int aiHits, required int compHits}) {
+  Widget _compSummaryRow(
+    ThemeData theme,
+    bool isDark, {
+    required int aiHits,
+    required int compHits,
+    required int userHits,
+  }) {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
       color: isDark
           ? const Color(0xFF8B5CF6).withValues(alpha: 0.04)
           : const Color(0xFF8B5CF6).withValues(alpha: 0.03),
       child: Row(
         children: [
-          const SizedBox(width: 30, child: Icon(Icons.assessment_rounded, size: 16, color: Color(0xFF8B5CF6))),
+          const SizedBox(
+            width: 28,
+            child: Icon(Icons.assessment_rounded, size: 16, color: Color(0xFF8B5CF6)),
+          ),
           Expanded(
             child: Center(
               child: Text(
                 '적중률',
                 style: TextStyle(
                   color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
-                  fontSize: 12,
+                  fontSize: 11,
                   fontWeight: FontWeight.w600,
                 ),
               ),
@@ -1236,16 +1321,19 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
           Expanded(
             child: Center(child: _hitsBadge(compHits, const Color(0xFF22C55E))),
           ),
+          Expanded(
+            child: Center(child: _hitsBadge(userHits, const Color(0xFFFFD700))),
+          ),
         ],
       ),
     );
   }
 
   Widget _hitsBadge(int hits, Color color) {
-    final label = '$hits/3 적중';
+    final label = '$hits/3';
     final bgAlpha = hits >= 2 ? 0.2 : 0.1;
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
       decoration: BoxDecoration(
         color: color.withValues(alpha: bgAlpha),
         borderRadius: BorderRadius.circular(8),
@@ -1254,7 +1342,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
         label,
         style: TextStyle(
           color: color,
-          fontSize: 12,
+          fontSize: 11,
           fontWeight: FontWeight.w700,
         ),
       ),

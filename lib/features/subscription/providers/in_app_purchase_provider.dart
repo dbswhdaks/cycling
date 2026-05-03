@@ -1,12 +1,68 @@
 import 'dart:async';
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:in_app_purchase/in_app_purchase.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import '../../../core/constants/iap_constants.dart';
+
+/// Google Play Billing 에러 코드(`BillingResponse.xxx`)를 사용자/개발자가
+/// 이해할 수 있는 한국어 안내 문구로 변환한다.
+/// 코드 자체의 버그가 아닌 콘솔/서명/테스터 설정 문제인 경우가 대부분이므로
+/// 점검해야 할 항목을 함께 안내한다.
+String _humanizeIapError(Object? rawError) {
+  if (rawError == null) return '결제 중 오류가 발생했습니다.';
+
+  final message = rawError is IAPError
+      ? rawError.message.toString()
+      : rawError is PlatformException
+      ? (rawError.message ?? rawError.code)
+      : rawError.toString();
+
+  final normalized = message.toLowerCase();
+
+  if (normalized.contains('developererror')) {
+    return '구글플레이 결제를 시작할 수 없습니다 (developerError).\n'
+        '아래 항목을 점검해 주세요.\n'
+        '1) Play Console에 동일 패키지명/서명(SHA-1)으로 APK가 업로드되어 있는지\n'
+        '2) 구독 상품이 "활성" 상태인지 (premium_monthly / premium_yearly)\n'
+        '3) 현재 로그인된 구글 계정이 라이선스 테스터로 등록되어 있는지\n'
+        '4) 앱이 내부 테스트 트랙 등 활성 트랙에 게시되어 있는지';
+  }
+  if (normalized.contains('itemunavailable')) {
+    return '구독 상품 정보를 불러올 수 없습니다. Play Console에서 상품이 활성 상태인지, '
+        '테스트 계정으로 로그인했는지 확인해 주세요.';
+  }
+  if (normalized.contains('itemalreadyowned')) {
+    return '이미 보유 중인 상품입니다. "구매 복원"을 진행해 주세요.';
+  }
+  if (normalized.contains('itemnotowned')) {
+    return '보유하지 않은 상품에 대한 요청입니다. 잠시 후 다시 시도해 주세요.';
+  }
+  if (normalized.contains('billingunavailable')) {
+    return '구글플레이 결제를 사용할 수 없습니다. Play 스토어 앱이 최신 버전인지, '
+        '구글 계정에 로그인되어 있는지 확인해 주세요.';
+  }
+  if (normalized.contains('serviceunavailable') ||
+      normalized.contains('servicedisconnected') ||
+      normalized.contains('servicetimeout')) {
+    return '결제 서비스에 일시적으로 연결할 수 없습니다. 네트워크 상태를 확인 후 다시 시도해 주세요.';
+  }
+  if (normalized.contains('usercanceled')) {
+    return '결제가 취소되었습니다.';
+  }
+  if (normalized.contains('networkerror')) {
+    return '네트워크 오류가 발생했습니다. 연결 상태를 확인 후 다시 시도해 주세요.';
+  }
+  if (normalized.contains('featurenotsupported')) {
+    return '현재 기기/스토어에서 지원하지 않는 결제 기능입니다.';
+  }
+
+  return message.isEmpty ? '결제 중 오류가 발생했습니다.' : '결제 오류: $message';
+}
 
 class SubscriptionEntitlement {
   const SubscriptionEntitlement({
@@ -192,9 +248,7 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
     try {
       await _inAppPurchase.restorePurchases();
     } catch (error) {
-      state = state.copyWith(
-        errorMessage: '구매 복원 중 오류가 발생했습니다: $error',
-      );
+      state = state.copyWith(errorMessage: '구매 복원 중 오류가 발생했습니다: $error');
     } finally {
       state = state.copyWith(isRestoring: false);
     }
@@ -211,11 +265,29 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
 
     final purchaseParam = PurchaseParam(productDetails: product);
     _log('buyNonConsumable() launching billing flow: $productId');
-    return _inAppPurchase.buyNonConsumable(purchaseParam: purchaseParam);
+    try {
+      return await _inAppPurchase.buyNonConsumable(purchaseParam: purchaseParam);
+    } on PlatformException catch (error, stack) {
+      _log(
+        'buyNonConsumable() PlatformException: code=${error.code}, message=${error.message}\n$stack',
+      );
+      state = state.copyWith(
+        isPurchasePending: false,
+        errorMessage: _humanizeIapError(error),
+      );
+      return false;
+    } catch (error, stack) {
+      _log('buyNonConsumable() unexpected error: $error\n$stack');
+      state = state.copyWith(
+        isPurchasePending: false,
+        errorMessage: _humanizeIapError(error),
+      );
+      return false;
+    }
   }
 
   Future<bool> startSubscriptionPurchase({
-    String preferredProductId = 'premium_monthly',
+    String preferredProductId = IapConstants.monthlyProductId,
   }) async {
     _log('startSubscriptionPurchase() requested: $preferredProductId');
     if (_hasActiveSubscription()) {
@@ -236,8 +308,8 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
 
     final candidateIds = <String>[
       preferredProductId,
-      'premium_monthly',
-      'premium_yearly',
+      IapConstants.monthlyProductId,
+      IapConstants.yearlyProductId,
     ];
 
     ProductDetails? targetProduct;
@@ -275,10 +347,7 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
       IapConstants.subscriptionProductIds.contains,
     );
     if (hasSubscription) {
-      state = state.copyWith(
-        isPurchasePending: false,
-        clearErrorMessage: true,
-      );
+      state = state.copyWith(isPurchasePending: false, clearErrorMessage: true);
       return true;
     }
 
@@ -299,10 +368,28 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
 
     final purchaseParam = PurchaseParam(productDetails: product);
     _log('buyConsumable() launching billing flow: $productId');
-    return _inAppPurchase.buyConsumable(
-      purchaseParam: purchaseParam,
-      autoConsume: true,
-    );
+    try {
+      return await _inAppPurchase.buyConsumable(
+        purchaseParam: purchaseParam,
+        autoConsume: true,
+      );
+    } on PlatformException catch (error, stack) {
+      _log(
+        'buyConsumable() PlatformException: code=${error.code}, message=${error.message}\n$stack',
+      );
+      state = state.copyWith(
+        isPurchasePending: false,
+        errorMessage: _humanizeIapError(error),
+      );
+      return false;
+    } catch (error, stack) {
+      _log('buyConsumable() unexpected error: $error\n$stack');
+      state = state.copyWith(
+        isPurchasePending: false,
+        errorMessage: _humanizeIapError(error),
+      );
+      return false;
+    }
   }
 
   ProductDetails? _findProduct(String productId) {
@@ -329,11 +416,13 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
 
         case PurchaseStatus.error:
           _log(
-            'purchase error: ${purchase.productID}, message=${purchase.error?.message}',
+            'purchase error: ${purchase.productID}, '
+            'code=${purchase.error?.code}, message=${purchase.error?.message}, '
+            'details=${purchase.error?.details}',
           );
           state = state.copyWith(
             isPurchasePending: false,
-            errorMessage: purchase.error?.message ?? '결제 중 오류가 발생했습니다.',
+            errorMessage: _humanizeIapError(purchase.error),
           );
           break;
 
@@ -376,8 +465,7 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
   Future<_PurchaseVerificationResult> _verifyPurchase(
     PurchaseDetails purchase,
   ) async {
-    final verificationData =
-        purchase.verificationData.serverVerificationData;
+    final verificationData = purchase.verificationData.serverVerificationData;
     final hasVerificationData = verificationData.isNotEmpty;
     if (!hasVerificationData) {
       return const _PurchaseVerificationResult(
@@ -406,9 +494,7 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
         isValid: true,
         isActive: isActive,
         expiresAtUtc: expiresAtUtc,
-        message: isActive
-            ? '로컬 검증으로 처리되었습니다.'
-            : '구독 기간이 만료되었습니다. 다시 구독해 주세요.',
+        message: isActive ? '로컬 검증으로 처리되었습니다.' : '구독 기간이 만료되었습니다. 다시 구독해 주세요.',
       );
     }
 
@@ -428,16 +514,16 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
         },
       );
       final payload = _asStringKeyedMap(response.data);
-      final isValid = _readBool(
-        payload,
-        const ['isValid', 'valid', 'ok'],
-        defaultValue: false,
-      );
-      final activeByPayload = _readBool(
-        payload,
-        const ['isActive', 'active', 'entitled'],
-        defaultValue: isValid,
-      );
+      final isValid = _readBool(payload, const [
+        'isValid',
+        'valid',
+        'ok',
+      ], defaultValue: false);
+      final activeByPayload = _readBool(payload, const [
+        'isActive',
+        'active',
+        'entitled',
+      ], defaultValue: isValid);
       final expiresAtUtc = _parseDateTimeUtc(
         payload['expiresAt'] ?? payload['expires_at'] ?? payload['expiryTime'],
       );
@@ -452,12 +538,10 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
         return const _PurchaseVerificationResult(
           isValid: false,
           isActive: false,
-          message:
-              '서버 검증 응답에 구독 만료일(expiresAt)이 없습니다. 서버 설정을 확인해 주세요.',
+          message: '서버 검증 응답에 구독 만료일(expiresAt)이 없습니다. 서버 설정을 확인해 주세요.',
         );
       }
-      final isActiveByTime =
-          expiresAtUtc.isAfter(DateTime.now().toUtc());
+      final isActiveByTime = expiresAtUtc.isAfter(DateTime.now().toUtc());
       final message =
           payload['message']?.toString() ?? payload['reason']?.toString();
 
@@ -524,9 +608,9 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
     if (purchasedAtUtc == null) return null;
 
     switch (productId) {
-      case 'premium_monthly':
+      case IapConstants.monthlyProductId:
         return _addMonthsUtc(purchasedAtUtc, 1);
-      case 'premium_yearly':
+      case IapConstants.yearlyProductId:
         return _addMonthsUtc(purchasedAtUtc, 12);
       default:
         return null;
@@ -579,9 +663,9 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
     required DateTime expiresAtUtc,
   }) {
     switch (productId) {
-      case 'premium_monthly':
+      case IapConstants.monthlyProductId:
         return _subtractMonthsUtc(expiresAtUtc, 1);
-      case 'premium_yearly':
+      case IapConstants.yearlyProductId:
         return _subtractMonthsUtc(expiresAtUtc, 12);
       default:
         return null;
@@ -590,14 +674,13 @@ class InAppPurchaseNotifier extends StateNotifier<InAppPurchaseState> {
 
   void _startEntitlementRefreshTimer() {
     _entitlementRefreshTimer?.cancel();
-    _entitlementRefreshTimer = Timer.periodic(
-      _entitlementRefreshInterval,
-      (_) async {
-        if (!state.isAvailable || state.isPurchasePending) return;
-        _log('periodic entitlement refresh start');
-        await restorePurchases(clearExisting: true);
-      },
-    );
+    _entitlementRefreshTimer = Timer.periodic(_entitlementRefreshInterval, (
+      _,
+    ) async {
+      if (!state.isAvailable || state.isPurchasePending) return;
+      _log('periodic entitlement refresh start');
+      await restorePurchases(clearExisting: true);
+    });
   }
 
   Future<void> _revokeProduct(String productId) async {
