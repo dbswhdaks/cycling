@@ -28,6 +28,9 @@ class RaceDetailScreen extends ConsumerStatefulWidget {
 
 enum _PaywallPlan { monthly, yearly }
 
+/// 결과 버튼 상태 - 출발 시각/현재 시각 기준.
+enum _ResultButtonState { pending, inProgress, finished }
+
 class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
     with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   late TabController _tabController;
@@ -961,18 +964,80 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
     );
   }
 
+  /// 출발 시각/현재 시각을 비교해 결과 버튼 상태를 결정.
+  _ResultButtonState _resolveResultButtonState(String? departureTime) {
+    if (date.length < 8) return _ResultButtonState.finished;
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final year = int.tryParse(date.substring(0, 4)) ?? 0;
+    final month = int.tryParse(date.substring(4, 6)) ?? 0;
+    final day = int.tryParse(date.substring(6, 8)) ?? 0;
+    final raceDay = DateTime(year, month, day);
+
+    if (raceDay.isAfter(today)) return _ResultButtonState.pending;
+    if (raceDay.isBefore(today)) return _ResultButtonState.finished;
+
+    // 오늘인 경우 — 출발 시각으로 판단
+    if (departureTime == null || departureTime.isEmpty) {
+      return _ResultButtonState.pending;
+    }
+    final timeStr = departureTime.replaceAll('"', ':');
+    final parts = timeStr.split(':');
+    if (parts.length < 2) return _ResultButtonState.pending;
+    final hour = int.tryParse(parts[0]) ?? -1;
+    final minute = int.tryParse(parts[1]) ?? -1;
+    if (hour < 0 || minute < 0) return _ResultButtonState.pending;
+
+    final startAt = DateTime(now.year, now.month, now.day, hour, minute);
+    final finishAt = startAt.add(const Duration(minutes: 5));
+
+    if (now.isBefore(startAt)) return _ResultButtonState.pending;
+    if (now.isBefore(finishAt)) return _ResultButtonState.inProgress;
+    return _ResultButtonState.finished;
+  }
+
   Widget _buildResultActionButton(
     BuildContext context, {
     bool compact = false,
   }) {
-    const actionColor = Color(0xFFFBBF24);
+    final raceListAsync =
+        ref.watch(raceListProvider((venue: venueCode, date: date)));
+    final currentRace = raceListAsync.valueOrNull?.data
+        .where((r) => r.raceNo == raceNo)
+        .firstOrNull;
+    final state = _resolveResultButtonState(currentRace?.departureTime);
+
+    late final Color actionColor;
+    late final IconData actionIcon;
+    late final String actionLabel;
+    switch (state) {
+      case _ResultButtonState.pending:
+        actionColor = const Color(0xFF9CA3AF);
+        actionIcon = Icons.schedule_rounded;
+        actionLabel = '진행전';
+        break;
+      case _ResultButtonState.inProgress:
+        actionColor = const Color(0xFFEF4444);
+        actionIcon = Icons.directions_bike_rounded;
+        actionLabel = '진행중';
+        break;
+      case _ResultButtonState.finished:
+        actionColor = const Color(0xFFFBBF24);
+        actionIcon = Icons.emoji_events_rounded;
+        actionLabel = '결과';
+        break;
+    }
+
     final horizontal = compact ? 12.0 : 22.0;
     final vertical = compact ? 6.0 : 11.0;
     final iconSize = compact ? 16.0 : 20.0;
     final fontSize = compact ? 13.0 : 16.0;
 
     return GestureDetector(
-      onTap: () => context.push('/result/$venueCode/$date/$raceNo'),
+      onTap: state == _ResultButtonState.finished
+          ? () => context.push('/result/$venueCode/$date/$raceNo')
+          : null,
       child: Container(
         constraints: compact ? null : const BoxConstraints(minWidth: 150),
         padding: EdgeInsets.symmetric(
@@ -988,14 +1053,10 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
             ? Row(
                 mainAxisSize: MainAxisSize.min,
                 children: [
-                  Icon(
-                    Icons.emoji_events_rounded,
-                    size: iconSize,
-                    color: actionColor,
-                  ),
+                  Icon(actionIcon, size: iconSize, color: actionColor),
                   const SizedBox(width: 6),
                   Text(
-                    '결과',
+                    actionLabel,
                     style: TextStyle(
                       color: actionColor,
                       fontSize: fontSize,
@@ -1010,7 +1071,7 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                   alignment: Alignment.center,
                   children: [
                     Text(
-                      '결과',
+                      actionLabel,
                       textAlign: TextAlign.center,
                       style: TextStyle(
                         color: actionColor,
@@ -1021,7 +1082,7 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                     Positioned(
                       left: 0,
                       child: Icon(
-                        Icons.emoji_events_rounded,
+                        actionIcon,
                         size: iconSize,
                         color: actionColor,
                       ),

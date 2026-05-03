@@ -197,19 +197,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
           const Spacer(),
           IconButton(
             icon: Icon(
-              Icons.videocam_rounded,
-              color: Colors.white.withValues(alpha: 0.8),
-              size: 24,
-            ),
-            tooltip: '경주 동영상',
-            onPressed: () => context.push('/video'),
-          ),
-          IconButton(
-            icon: Icon(
               Icons.share_rounded,
               color: Colors.white.withValues(alpha: 0.8),
               size: 22,
             ),
+            tooltip: '공유하기',
             onPressed: () {
               Share.share(
                 '경륜 Plus - $venueName $dateStr\n'
@@ -218,6 +210,59 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                 subject: '경륜 Plus - $venueName $dateStr',
               );
             },
+          ),
+          PopupMenuButton<String>(
+            tooltip: '메뉴',
+            icon: Icon(
+              Icons.more_vert_rounded,
+              color: Colors.white.withValues(alpha: 0.8),
+              size: 24,
+            ),
+            onSelected: (value) {
+              switch (value) {
+                case 'video':
+                  context.push('/video');
+                  break;
+                case 'subscription':
+                  context.push('/subscription');
+                  break;
+                case 'settings':
+                  context.push('/settings');
+                  break;
+              }
+            },
+            itemBuilder: (context) => const [
+              PopupMenuItem(
+                value: 'video',
+                child: Row(
+                  children: [
+                    Icon(Icons.videocam_rounded, size: 20),
+                    SizedBox(width: 10),
+                    Text('경주 동영상'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'subscription',
+                child: Row(
+                  children: [
+                    Icon(Icons.workspace_premium_rounded, size: 20),
+                    SizedBox(width: 10),
+                    Text('구독하기'),
+                  ],
+                ),
+              ),
+              PopupMenuItem(
+                value: 'settings',
+                child: Row(
+                  children: [
+                    Icon(Icons.settings_rounded, size: 20),
+                    SizedBox(width: 10),
+                    Text('설정'),
+                  ],
+                ),
+              ),
+            ],
           ),
         ],
       ),

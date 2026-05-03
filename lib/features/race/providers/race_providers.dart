@@ -31,8 +31,8 @@ final selectedDateProvider = StateProvider<DateTime>((ref) {
   return DateTime(now.year, now.month, now.day);
 });
 
-/// 인앱결제(Google Play) 기반 구독 활성 여부
-/// 활성 조건: 보유 productId 중 하나가 subscriptionProductIds에 포함
+/// 인앱결제(Google Play) 기반 구독 활성 여부.
+/// 활성 조건: 보유 productId 중 하나가 subscriptionProductIds에 포함.
 final isSubscribedProvider = Provider<bool>((ref) {
   final iapState = ref.watch(inAppPurchaseProvider);
   return iapState.purchasedProductIds.any(

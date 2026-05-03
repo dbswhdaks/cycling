@@ -61,6 +61,24 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     return raceDate.isAfter(today);
   }
 
+  /// 오늘 경기인데 출발 시간이 아직 안 됐는지 판단.
+  /// `departureTime`은 "10:35" 또는 '10"35' 형태.
+  /// 결과가 확정되기까지 대략 5분 여유를 둔다.
+  bool _isTodayRaceNotStartedYet(String? departureTime) {
+    if (!_isTodayRace) return false;
+    if (departureTime == null || departureTime.isEmpty) return false;
+    final timeStr = departureTime.replaceAll('"', ':');
+    final parts = timeStr.split(':');
+    if (parts.length < 2) return false;
+    final hour = int.tryParse(parts[0]) ?? -1;
+    final minute = int.tryParse(parts[1]) ?? -1;
+    if (hour < 0 || minute < 0) return false;
+    final now = DateTime.now();
+    final finishAt = DateTime(now.year, now.month, now.day, hour, minute)
+        .add(const Duration(minutes: 5));
+    return now.isBefore(finishAt);
+  }
+
   static bool _isNotYetError(Object error) =>
       error.toString().contains('NOT_YET');
 
@@ -111,8 +129,17 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     final predictionAsync = ref.watch(predictionProvider(params));
     final entriesAsync = ref.watch(raceEntriesProvider(params));
     final oddsAsync = ref.watch(oddsProvider(params));
+    final raceListAsync =
+        ref.watch(raceListProvider((venue: venueCode, date: date)));
+
+    final currentRace = raceListAsync.valueOrNull?.data
+        .where((r) => r.raceNo == raceNo)
+        .firstOrNull;
+    final isTodayNotStarted =
+        _isTodayRaceNotStartedYet(currentRace?.departureTime);
 
     final isNotYet = _isNotYetRace
+        || isTodayNotStarted
         || (_isNotYetError(rankAsync.error ?? '') && _isNotYetError(resultAsync.error ?? ''));
 
     if (!isNotYet && _autoRefreshTimer != null && !_isTodayRace) {
