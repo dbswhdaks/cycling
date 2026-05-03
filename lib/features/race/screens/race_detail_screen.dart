@@ -848,6 +848,15 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
               onPressed: _goToSubscription,
               icon: const Icon(Icons.workspace_premium_rounded),
               label: Text(actionLabel),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB45309),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                textStyle: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
           ),
         ],

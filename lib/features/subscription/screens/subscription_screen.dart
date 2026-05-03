@@ -234,6 +234,16 @@ class _SubscriptionScreenState extends ConsumerState<SubscriptionScreen> {
                     },
               style: FilledButton.styleFrom(
                 minimumSize: const Size.fromHeight(50),
+                backgroundColor: const Color(0xFFB45309),
+                foregroundColor: Colors.white,
+                disabledBackgroundColor: const Color(0xFFB45309)
+                    .withValues(alpha: 0.4),
+                disabledForegroundColor: Colors.white.withValues(alpha: 0.6),
+                elevation: 0,
+                textStyle: const TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.w700,
+                ),
               ),
               child: Text(actionText),
             ),

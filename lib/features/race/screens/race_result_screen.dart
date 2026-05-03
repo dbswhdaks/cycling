@@ -1063,6 +1063,15 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
               onPressed: () => context.push('/subscription'),
               icon: const Icon(Icons.workspace_premium_rounded),
               label: const Text('구독하고 비교 보기'),
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFB45309),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                textStyle: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
             ),
           ),
         ],

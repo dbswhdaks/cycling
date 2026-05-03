@@ -226,9 +226,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                 case 'subscription':
                   context.push('/subscription');
                   break;
-                case 'settings':
-                  context.push('/settings');
-                  break;
               }
             },
             itemBuilder: (context) => const [
@@ -249,16 +246,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
                     Icon(Icons.workspace_premium_rounded, size: 20),
                     SizedBox(width: 10),
                     Text('구독하기'),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: 'settings',
-                child: Row(
-                  children: [
-                    Icon(Icons.settings_rounded, size: 20),
-                    SizedBox(width: 10),
-                    Text('설정'),
                   ],
                 ),
               ),
