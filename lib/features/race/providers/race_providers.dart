@@ -6,6 +6,7 @@ import '../../../core/data/mock_data.dart';
 import '../../../core/services/cycling_api_service.dart';
 import '../../../core/services/prediction_engine.dart';
 import '../../../core/services/supabase_backup_service.dart';
+import '../../../features/admin/providers/admin_auth_provider.dart';
 import '../../../features/subscription/providers/in_app_purchase_provider.dart';
 import '../../../models/race.dart';
 import '../../../models/race_entry.dart';
@@ -32,8 +33,10 @@ final selectedDateProvider = StateProvider<DateTime>((ref) {
 });
 
 /// 인앱결제(Google Play) 기반 구독 활성 여부.
-/// 활성 조건: 보유 productId 중 하나가 subscriptionProductIds에 포함.
+/// 활성 조건: (1) 관리자 로그인 상태이거나, (2) 보유 productId 중 하나가 subscriptionProductIds에 포함.
 final isSubscribedProvider = Provider<bool>((ref) {
+  final isAdmin = ref.watch(adminAuthProvider);
+  if (isAdmin) return true;
   final iapState = ref.watch(inAppPurchaseProvider);
   return iapState.purchasedProductIds.any(
     IapConstants.subscriptionProductIds.contains,

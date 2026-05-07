@@ -5,6 +5,7 @@ import 'package:go_router/go_router.dart';
 import 'package:share_plus/share_plus.dart';
 import '../../../core/widgets/shimmer_loading.dart';
 import '../../../models/race.dart';
+import '../../admin/providers/admin_auth_provider.dart';
 import '../../race/providers/race_providers.dart';
 import '../widgets/month_calendar_sheet.dart';
 import '../widgets/race_card.dart';
@@ -31,6 +32,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
   Timer? _autoRefreshTimer;
   Timer? _displayTimer;
   bool _autoRefreshEnabled = true;
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   @override
   void initState() {
@@ -114,7 +116,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
     );
 
     return Scaffold(
+      key: _scaffoldKey,
       backgroundColor: const Color(0xFF0D1117),
+      endDrawer: const _HomeDrawer(),
       body: SafeArea(
         child: Column(
           children: [
@@ -211,45 +215,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
               );
             },
           ),
-          PopupMenuButton<String>(
+          IconButton(
             tooltip: '메뉴',
             icon: Icon(
-              Icons.more_vert_rounded,
-              color: Colors.white.withValues(alpha: 0.8),
-              size: 24,
+              Icons.menu_rounded,
+              color: Colors.white.withValues(alpha: 0.85),
+              size: 26,
             ),
-            onSelected: (value) {
-              switch (value) {
-                case 'video':
-                  context.push('/video');
-                  break;
-                case 'subscription':
-                  context.push('/subscription');
-                  break;
-              }
-            },
-            itemBuilder: (context) => const [
-              PopupMenuItem(
-                value: 'video',
-                child: Row(
-                  children: [
-                    Icon(Icons.videocam_rounded, size: 20),
-                    SizedBox(width: 10),
-                    Text('경주 동영상'),
-                  ],
-                ),
-              ),
-              PopupMenuItem(
-                value: 'subscription',
-                child: Row(
-                  children: [
-                    Icon(Icons.workspace_premium_rounded, size: 20),
-                    SizedBox(width: 10),
-                    Text('구독하기'),
-                  ],
-                ),
-              ),
-            ],
+            onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
           ),
         ],
       ),
@@ -613,5 +586,178 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
 
   bool _isSameDay(DateTime a, DateTime b) {
     return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+}
+
+// ─── 햄버거 메뉴 (endDrawer) ───
+
+class _HomeDrawer extends ConsumerWidget {
+  const _HomeDrawer();
+
+  void _go(BuildContext context, String location) {
+    Navigator.of(context).pop();
+    context.push(location);
+  }
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final isAdmin = ref.watch(adminAuthProvider);
+
+    return Drawer(
+      backgroundColor: const Color(0xFF161B22),
+      child: SafeArea(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Container(
+              padding: const EdgeInsets.fromLTRB(20, 24, 20, 20),
+              decoration: const BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topLeft,
+                  end: Alignment.bottomRight,
+                  colors: [
+                    Color(0xFF0D47A1),
+                    Color(0xFF1565C0),
+                    Color(0xFFB45309),
+                  ],
+                ),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      const Icon(
+                        Icons.emoji_events_rounded,
+                        color: Color(0xFFFBBF24),
+                        size: 30,
+                      ),
+                      const SizedBox(width: 10),
+                      const Text(
+                        '경륜 Plus',
+                        style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 18,
+                          fontWeight: FontWeight.w800,
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  Text(
+                    '경륜 경주 정보 · 출주표 · AI 예측',
+                    style: TextStyle(
+                      color: Colors.white.withValues(alpha: 0.85),
+                      fontSize: 12,
+                    ),
+                  ),
+                  if (isAdmin) ...[
+                    const SizedBox(height: 12),
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 5,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF22C55E).withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(999),
+                        border: Border.all(
+                          color: const Color(0xFF22C55E)
+                              .withValues(alpha: 0.5),
+                        ),
+                      ),
+                      child: const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.verified_user_rounded,
+                            size: 12,
+                            color: Color(0xFF22C55E),
+                          ),
+                          SizedBox(width: 4),
+                          Text(
+                            '관리자 모드',
+                            style: TextStyle(
+                              color: Color(0xFF22C55E),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(height: 8),
+            _DrawerItem(
+              icon: Icons.workspace_premium_rounded,
+              iconColor: const Color(0xFFFBBF24),
+              label: '구독하기',
+              onTap: () => _go(context, '/subscription'),
+            ),
+            _DrawerItem(
+              icon: Icons.shield_outlined,
+              iconColor: const Color(0xFF22C55E),
+              label: '관리자 페이지',
+              trailing: isAdmin
+                  ? const Icon(
+                      Icons.check_circle_rounded,
+                      size: 18,
+                      color: Color(0xFF22C55E),
+                    )
+                  : null,
+              onTap: () => _go(context, '/admin'),
+            ),
+            const Spacer(),
+            const Divider(color: Color(0xFF30363D), height: 1),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+              child: Text(
+                '경륜 Plus',
+                style: TextStyle(
+                  color: Colors.grey.shade500,
+                  fontSize: 11,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DrawerItem extends StatelessWidget {
+  const _DrawerItem({
+    required this.icon,
+    required this.iconColor,
+    required this.label,
+    required this.onTap,
+    this.trailing,
+  });
+
+  final IconData icon;
+  final Color iconColor;
+  final String label;
+  final VoidCallback onTap;
+  final Widget? trailing;
+
+  @override
+  Widget build(BuildContext context) {
+    return ListTile(
+      leading: Icon(icon, color: iconColor, size: 22),
+      title: Text(
+        label,
+        style: const TextStyle(
+          color: Colors.white,
+          fontSize: 14,
+          fontWeight: FontWeight.w600,
+        ),
+      ),
+      trailing: trailing,
+      onTap: onTap,
+    );
   }
 }

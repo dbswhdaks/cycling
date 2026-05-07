@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import '../core/constants/iap_constants.dart';
+import '../features/admin/screens/admin_screen.dart';
 import '../features/home/screens/home_screen.dart';
 import '../features/race/screens/race_detail_screen.dart';
 import '../features/race/screens/race_result_screen.dart';
@@ -79,5 +80,6 @@ final appRouter = GoRouter(
         return VideoPlayerScreen(video: video);
       },
     ),
+    GoRoute(path: '/admin', builder: (context, state) => const AdminScreen()),
   ],
 );
