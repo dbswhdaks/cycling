@@ -143,9 +143,28 @@ class _RaceCardState extends State<RaceCard> {
         Container(
           width: 44,
           height: 44,
-          decoration: const BoxDecoration(
-            color: Color(0xFF22C55E),
+          decoration: BoxDecoration(
             shape: BoxShape.circle,
+            gradient: const LinearGradient(
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+              colors: [
+                Color(0xFF1E63C7),
+                Color(0xFF0A2A5E),
+              ],
+            ),
+            border: Border.all(
+              color: const Color(0xFFFBBF24).withValues(alpha: 0.55),
+              width: 1.2,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFF0D47A1).withValues(alpha: 0.45),
+                blurRadius: 12,
+                spreadRadius: 0,
+                offset: const Offset(0, 2),
+              ),
+            ],
           ),
           alignment: Alignment.center,
           child: Text(
@@ -154,6 +173,13 @@ class _RaceCardState extends State<RaceCard> {
               color: Colors.white,
               fontSize: 20,
               fontWeight: FontWeight.w800,
+              shadows: [
+                Shadow(
+                  color: Color(0x66000000),
+                  blurRadius: 4,
+                  offset: Offset(0, 1),
+                ),
+              ],
             ),
           ),
         ),

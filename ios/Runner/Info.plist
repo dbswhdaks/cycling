@@ -45,5 +45,17 @@
 	<true/>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>가까운 경륜장·지사를 안내하기 위해 현재 위치를 사용합니다.</string>
+	<key>LSApplicationQueriesSchemes</key>
+	<array>
+		<string>tel</string>
+		<string>nmap</string>
+		<string>kakaomap</string>
+		<string>tmap</string>
+		<string>comgooglemaps</string>
+		<string>http</string>
+		<string>https</string>
+	</array>
 </dict>
 </plist>

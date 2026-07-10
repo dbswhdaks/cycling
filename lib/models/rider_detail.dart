@@ -1,5 +1,50 @@
 import 'race_entry.dart';
 
+/// 최근 개별 경기 기록
+class RiderRaceRecord {
+  final String date; // "2026.06.15"
+  final int raceNo;
+  final String grade;
+  final int? rank;
+  final double? score;
+  final int? venueCode;
+
+  const RiderRaceRecord({
+    required this.date,
+    required this.raceNo,
+    required this.grade,
+    this.rank,
+    this.score,
+    this.venueCode,
+  });
+
+  String get venueLabel => switch (venueCode) {
+        1 => '광명',
+        2 => '창원',
+        3 => '부산',
+        _ => '-',
+      };
+}
+
+/// 경기장별 성적 집계
+class VenueRecord {
+  final int total;
+  final int wins;
+  final int podiums;
+
+  const VenueRecord({
+    this.total = 0,
+    this.wins = 0,
+    this.podiums = 0,
+  });
+
+  double get winRate => total > 0 ? (wins / total) * 100 : 0;
+  double get podiumRate => total > 0 ? (podiums / total) * 100 : 0;
+}
+
+/// 컨디션 트렌드
+enum RiderConditionTrend { rising, stable, falling, unknown }
+
 /// 선수 상세 정보 (연간 출전 기록 집계 기반)
 class RiderDetail {
   final String riderId;
@@ -25,9 +70,19 @@ class RiderDetail {
   final String? school;
   final String? trainingBase;
 
-  // 최근 컨디션 (최근 5경기 평균 득점)
+  // 추가 프로필
+  final String? previousGrade;
+  final int? cohortNo; // 기수
+  final double? gearRatio; // 기어배수
+  final String? time200m; // 200m 기록
+
+  // 최근 컨디션
   final double? recentAvgScore;
   final List<double> recentScores;
+  final List<RiderRaceRecord> recentRaces;
+
+  // 경기장별 성적
+  final Map<int, VenueRecord> venueBreakdown;
 
   const RiderDetail({
     required this.riderId,
@@ -46,14 +101,25 @@ class RiderDetail {
     this.age,
     this.school,
     this.trainingBase,
+    this.previousGrade,
+    this.cohortNo,
+    this.gearRatio,
+    this.time200m,
     this.recentAvgScore,
     this.recentScores = const [],
+    this.recentRaces = const [],
+    this.venueBreakdown = const {},
   });
 
   int get totalWins => breakWins + markWins + chaseWins;
 
   double get winRate =>
       yearRaceCount > 0 ? (year1stCount / yearRaceCount) * 100 : 0;
+
+  /// 연대율 (1착 + 2착)
+  double get top2Rate => yearRaceCount > 0
+      ? ((year1stCount + year2ndCount) / yearRaceCount) * 100
+      : 0;
 
   double get podiumRate => yearRaceCount > 0
       ? ((year1stCount + year2ndCount + year3rdCount) / yearRaceCount) * 100
@@ -66,6 +132,35 @@ class RiderDetail {
     if (chaseWins > 0) return '추입';
     return '-';
   }
+
+  /// 이전 등급 대비 현재 등급 변화
+  int get gradeChange {
+    if (previousGrade == null || previousGrade!.isEmpty) return 0;
+    final prev = _gradeRank(previousGrade!);
+    final curr = _gradeRank(grade);
+    if (prev == 0 || curr == 0) return 0;
+    return prev - curr; // 양수 = 승급, 음수 = 강급
+  }
+
+  RiderConditionTrend get conditionTrend {
+    if (recentAvgScore == null || avgScore == 0) {
+      return RiderConditionTrend.unknown;
+    }
+    final diff = recentAvgScore! - avgScore;
+    if (diff > 0.5) return RiderConditionTrend.rising;
+    if (diff < -0.5) return RiderConditionTrend.falling;
+    return RiderConditionTrend.stable;
+  }
+
+  static int _gradeRank(String g) => switch (g) {
+        'S' => 6,
+        'A1' => 5,
+        'A2' => 4,
+        'B1' => 3,
+        'B2' => 2,
+        'B3' => 1,
+        _ => 0,
+      };
 
   factory RiderDetail.fromRaceEntry(RaceEntry entry) {
     return RiderDetail(
@@ -83,20 +178,23 @@ class RiderDetail {
     final r = seed % 100;
 
     final gradeMultiplier = switch (entry.grade) {
-      'S'  => 1.3,
+      'S' => 1.3,
       'A1' => 1.15,
       'A2' => 1.0,
       'B1' => 0.85,
       'B2' => 0.7,
       'B3' => 0.55,
-      _    => 0.75,
+      _ => 0.75,
     };
 
     final yearRaces = (18 + (r % 25) * gradeMultiplier).round();
     final winPct = (0.06 + (r % 12) * 0.008) * gradeMultiplier;
     final year1st = (yearRaces * winPct).round().clamp(0, yearRaces);
-    final year2nd = (yearRaces * winPct * 0.85).round().clamp(0, yearRaces - year1st);
-    final year3rd = (yearRaces * winPct * 0.65).round().clamp(0, yearRaces - year1st - year2nd);
+    final year2nd =
+        (yearRaces * winPct * 0.85).round().clamp(0, yearRaces - year1st);
+    final year3rd = (yearRaces * winPct * 0.65)
+        .round()
+        .clamp(0, yearRaces - year1st - year2nd);
 
     int breakW = 0, markW = 0, chaseW = 0;
     final totalW = year1st + entry.recent3Wins + (r % 4);
@@ -125,9 +223,27 @@ class RiderDetail {
     final ageBase = switch (entry.grade) {
       'S' || 'A1' => 30,
       'A2' || 'B1' => 27,
-      _            => 24,
+      _ => 24,
     };
     final age = ageBase + (r % 8);
+    final cohort = 6 + (r % 20); // 6기 ~ 25기
+
+    // 기어배수: 등급별 대략적인 범위 3.5 ~ 4.5
+    final gearBase = switch (entry.grade) {
+      'S' || 'A1' => 4.1,
+      'A2' || 'B1' => 3.9,
+      _ => 3.75,
+    };
+    final gearRatio = double.parse(
+      (gearBase + ((r % 10) - 5) * 0.02).toStringAsFixed(2),
+    );
+    // 200m 기록: 등급별 대략 11.0 ~ 12.2
+    final timeBase = switch (entry.grade) {
+      'S' || 'A1' => 11.10,
+      'A2' || 'B1' => 11.35,
+      _ => 11.70,
+    };
+    final time200m = (timeBase + ((r % 12) - 6) * 0.02).toStringAsFixed(2);
 
     return RiderDetail(
       riderId: entry.riderId,
@@ -145,6 +261,9 @@ class RiderDetail {
       recentAvgScore: recentAvg,
       recentScores: scores,
       age: age,
+      cohortNo: cohort,
+      gearRatio: gearRatio,
+      time200m: time200m,
     );
   }
 }

@@ -8,9 +8,12 @@ import '../features/race/screens/race_result_screen.dart';
 import '../features/rider/screens/rider_detail_screen.dart';
 import '../features/settings/screens/api_settings_screen.dart';
 import '../features/subscription/screens/subscription_screen.dart';
+import '../features/venues/screens/venue_detail_screen.dart';
+import '../features/venues/screens/venue_directions_screen.dart';
 import '../features/video/screens/race_video_screen.dart';
 import '../features/video/screens/video_player_screen.dart';
 import '../models/race_video.dart';
+import '../models/venue_location.dart';
 
 final _rootNavigatorKey = GlobalKey<NavigatorState>();
 
@@ -68,6 +71,17 @@ final appRouter = GoRouter(
             ? IapConstants.yearlyProductId
             : IapConstants.monthlyProductId,
       ),
+    ),
+    GoRoute(
+      path: '/venues',
+      builder: (context, state) => const VenueDirectionsScreen(),
+    ),
+    GoRoute(
+      path: '/venues/detail',
+      builder: (context, state) {
+        final venue = state.extra as VenueLocation;
+        return VenueDetailScreen(venue: venue);
+      },
     ),
     GoRoute(
       path: '/video',

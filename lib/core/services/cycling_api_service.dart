@@ -127,7 +127,9 @@ class CyclingApiService {
 
       for (final item in extracted) {
         if (item is Map) {
-          items.add(Map<String, dynamic>.from(item));
+          final m = Map<String, dynamic>.from(item);
+          m.putIfAbsent('meet', () => meet.toString());
+          items.add(m);
         }
       }
 

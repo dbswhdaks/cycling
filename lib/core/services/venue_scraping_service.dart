@@ -201,6 +201,7 @@ class VenueScrapingService {
           'brk_win_cnt': scoreData['brkWin'] ?? '0',
           'mrk_win_cnt': scoreData['mrkWin'] ?? '0',
           'pre_win_cnt': '0',
+          'meet': meetCode.toString(),
           'data_source': 'scrape_lepopark',
         });
       }
@@ -344,6 +345,7 @@ class VenueScrapingService {
           'racer_nm': name,
           'racer_grd_cd': parsed['grade'] ?? '',
           'racer_grd_cur_cd': parsed['grade'] ?? '',
+          'racer_grd_pre_cd': parsed['prevGrade'] ?? '',
           'race_len': (distance ?? 0).toString(),
           'dptre_tm': deptTime ?? '',
           'round_cnt': (roundCount ?? 0).toString(),
@@ -352,6 +354,13 @@ class VenueScrapingService {
           'brk_win_cnt': parsed['brkWin'] ?? '0',
           'mrk_win_cnt': parsed['mrkWin'] ?? '0',
           'pre_win_cnt': '0',
+          if (parsed['age'] != null) 'age': parsed['age']!,
+          if (parsed['cohort'] != null) 'cohort': parsed['cohort']!,
+          if (parsed['gear'] != null) 'gear_ratio': parsed['gear']!,
+          if (parsed['time200'] != null) 'time_200m': parsed['time200']!,
+          if (parsed['trainingBase'] != null)
+            'trainingBase': parsed['trainingBase']!,
+          'meet': '3',
           'data_source': 'scrape_spo1',
         });
       }
@@ -362,7 +371,7 @@ class VenueScrapingService {
     return items;
   }
 
-  /// SPO1 테이블 셀에서 등급·평균득점·전법 추출.
+  /// SPO1 테이블 셀에서 등급·평균득점·전법·기수·나이·기어배수·200m·훈련지 추출.
   ///
   /// 열 순서 (추정):
   ///   선수명 | 기수 | 나이 | 기어배수 | 200M기록 | 훈련지 |
@@ -373,20 +382,80 @@ class VenueScrapingService {
     final result = <String, String>{};
     final gradeRegex = RegExp(r'^[SA-Z]\d$');
 
-    // 등급 찾기: 단일 대문자+숫자 패턴 (S1, A2, B3 등)
+    // 등급 찾기: 단일 대문자+숫자 패턴 (뒤에서부터 → 현재등급 우선)
+    int? currentGradeIdx;
     for (int i = cells.length - 1; i >= 0; i--) {
       final stripped = _stripParentheses(cells[i]);
       if (gradeRegex.hasMatch(stripped)) {
         result['grade'] = stripped;
+        currentGradeIdx = i;
         break;
       }
     }
+    // 이전 등급: 현재 등급 다음(뒤) 셀 또는 그 다음에서 재탐색
+    if (currentGradeIdx != null) {
+      for (int i = currentGradeIdx + 1; i < cells.length; i++) {
+        final stripped = _stripParentheses(cells[i]);
+        if (gradeRegex.hasMatch(stripped)) {
+          result['prevGrade'] = stripped;
+          break;
+        }
+      }
+    }
 
-    // 평균득점 찾기: 80~100 범위 소수점 숫자
+    // 평균득점: 60~120 범위 소수점 숫자
     for (int i = cells.length - 1; i >= 0; i--) {
       final val = double.tryParse(cells[i]);
       if (val != null && val >= 60 && val <= 120 && cells[i].contains('.')) {
         result['avgScore'] = cells[i];
+        break;
+      }
+    }
+
+    // 나이: 20~50 범위 정수 (앞쪽 열)
+    for (int i = 0; i < cells.length && i < 6; i++) {
+      final stripped = _stripParentheses(cells[i]);
+      final val = int.tryParse(stripped);
+      if (val != null && val >= 18 && val <= 60) {
+        // 첫 번째 등장하는 소형 정수 → 나이 후보
+        if (!result.containsKey('age')) result['age'] = val.toString();
+      }
+    }
+
+    // 기수: 2~99 범위 정수, 나이보다 앞 열
+    for (int i = 0; i < cells.length && i < 4; i++) {
+      final stripped = _stripParentheses(cells[i]);
+      final val = int.tryParse(stripped);
+      if (val != null && val >= 1 && val <= 99 && !result.containsKey('cohort')) {
+        result['cohort'] = val.toString();
+        break;
+      }
+    }
+
+    // 기어배수: 3.0~5.0 범위 소수
+    for (int i = 0; i < cells.length && i < 8; i++) {
+      final val = double.tryParse(cells[i]);
+      if (val != null && val >= 3.0 && val <= 5.0 && cells[i].contains('.')) {
+        result['gear'] = cells[i];
+        break;
+      }
+    }
+
+    // 200m 기록: 10.0~14.0 범위 소수
+    for (int i = 0; i < cells.length && i < 8; i++) {
+      final val = double.tryParse(cells[i]);
+      if (val != null && val >= 10.0 && val <= 14.0 && cells[i].contains('.')) {
+        result['time200'] = cells[i];
+        break;
+      }
+    }
+
+    // 훈련지: 한글 지명 (창원·김해·대전·양산·부산 등)
+    final trainRegex = RegExp(r'^(창원|김해|대전|양산|부산|광명|서울|경남)$');
+    for (int i = 0; i < cells.length && i < 8; i++) {
+      final trimmed = cells[i].trim();
+      if (trainRegex.hasMatch(trimmed)) {
+        result['trainingBase'] = trimmed;
         break;
       }
     }

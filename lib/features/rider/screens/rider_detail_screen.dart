@@ -107,9 +107,10 @@ class RiderDetailScreen extends ConsumerWidget {
   Widget _buildContent(BuildContext context, RiderDetail detail) {
     final theme = Theme.of(context);
     final gradeColor = _gradeColor(detail.grade);
+    final bottomInset = MediaQuery.of(context).padding.bottom;
 
     return Padding(
-      padding: const EdgeInsets.all(20),
+      padding: EdgeInsets.fromLTRB(20, 20, 20, 32 + bottomInset),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -123,11 +124,33 @@ class RiderDetailScreen extends ConsumerWidget {
             iconColor: const Color(0xFF3B82F6),
             title: '기본 정보',
             children: [
-              _buildInfoRow(theme, '등급', detail.grade, valueColor: gradeColor),
+              _buildGradeRow(theme, detail, gradeColor),
               _buildInfoRow(theme, '주 전법', detail.tacticLabel),
               _buildInfoRow(theme, '통산 평균 득점', detail.avgScore.toStringAsFixed(1)),
               if (detail.yearRaceCount > 0)
                 _buildInfoRow(theme, '올해 출전', '${detail.yearRaceCount}회'),
+              if (detail.gearRatio != null)
+                _buildInfoRow(theme, '기어배수',
+                    detail.gearRatio!.toStringAsFixed(2)),
+              if (detail.time200m != null)
+                _buildInfoRow(theme, '200m 기록', '${detail.time200m}초'),
+            ],
+          ),
+          const SizedBox(height: 20),
+          _buildSection(
+            theme,
+            icon: Icons.person_outline_rounded,
+            iconColor: const Color(0xFFF59E0B),
+            title: '선수 배경',
+            children: [
+              if (detail.age != null)
+                _buildInfoRow(theme, '나이', '${detail.age}세'),
+              if (detail.cohortNo != null)
+                _buildInfoRow(theme, '기수', '${detail.cohortNo}기'),
+              if (detail.school != null)
+                _buildInfoRow(theme, '출신 학교', detail.school!),
+              if (detail.trainingBase != null)
+                _buildInfoRow(theme, '훈련지', detail.trainingBase!),
             ],
           ),
           if (detail.yearRaceCount > 0) ...[
@@ -148,7 +171,23 @@ class RiderDetailScreen extends ConsumerWidget {
                     valueColor: const Color(0xFFCD7F32)),
                 _buildInfoRow(
                   theme,
-                  '입상률',
+                  '승률 (1착)',
+                  '${detail.winRate.toStringAsFixed(1)}%',
+                  valueColor: detail.winRate >= 20
+                      ? const Color(0xFFFBBF24)
+                      : null,
+                ),
+                _buildInfoRow(
+                  theme,
+                  '연대율 (1·2착)',
+                  '${detail.top2Rate.toStringAsFixed(1)}%',
+                  valueColor: detail.top2Rate >= 35
+                      ? const Color(0xFF3B82F6)
+                      : null,
+                ),
+                _buildInfoRow(
+                  theme,
+                  '삼연대율 (1·2·3착)',
                   '${detail.podiumRate.toStringAsFixed(1)}%',
                   valueColor: detail.podiumRate >= 50
                       ? const Color(0xFF22C55E)
@@ -187,33 +226,46 @@ class RiderDetailScreen extends ConsumerWidget {
               iconColor: const Color(0xFF22C55E),
               title: '최근 컨디션',
               children: [
-                if (detail.recentAvgScore != null)
+                _buildTrendBanner(theme, detail),
+                if (detail.recentAvgScore != null) ...[
+                  const SizedBox(height: 10),
                   _buildInfoRow(
                     theme,
                     '최근 ${detail.recentScores.length}경기 평균',
                     detail.recentAvgScore!.toStringAsFixed(1),
                     valueColor: _conditionColor(detail),
                   ),
+                ],
                 const SizedBox(height: 8),
                 _buildScoreChart(theme, detail),
               ],
             ),
           ],
-          if (detail.age != null || detail.school != null || detail.trainingBase != null) ...[
+          if (detail.recentRaces.isNotEmpty) ...[
             const SizedBox(height: 20),
             _buildSection(
               theme,
-              icon: Icons.person_outline_rounded,
-              iconColor: const Color(0xFFF59E0B),
-              title: '선수 배경',
+              icon: Icons.history_rounded,
+              iconColor: const Color(0xFF06B6D4),
+              title: '최근 5경기 상세',
               children: [
-                if (detail.age != null) _buildInfoRow(theme, '나이', '${detail.age}세'),
-                if (detail.school != null) _buildInfoRow(theme, '출신 학교', detail.school!),
-                if (detail.trainingBase != null) _buildInfoRow(theme, '훈련지', detail.trainingBase!),
+                _buildRecentRacesTable(theme, detail.recentRaces),
               ],
             ),
           ],
-          const SizedBox(height: 24),
+          if (detail.venueBreakdown.length >= 2) ...[
+            const SizedBox(height: 20),
+            _buildSection(
+              theme,
+              icon: Icons.location_on_rounded,
+              iconColor: const Color(0xFFEC4899),
+              title: '경기장별 성적',
+              children: [
+                _buildVenueBreakdown(theme, detail.venueBreakdown),
+              ],
+            ),
+          ],
+          const SizedBox(height: 8),
         ],
       ),
     );
@@ -568,6 +620,340 @@ class RiderDetailScreen extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  // ─── 신규 위젯 ───
+
+  Widget _buildGradeRow(ThemeData theme, RiderDetail detail, Color gradeColor) {
+    final change = detail.gradeChange;
+    final hasPrev =
+        detail.previousGrade != null && detail.previousGrade!.isNotEmpty;
+
+    Widget valueWidget;
+    if (hasPrev) {
+      final chevColor = change > 0
+          ? const Color(0xFF22C55E)
+          : (change < 0 ? const Color(0xFFEF4444) : Colors.white54);
+      final chevIcon = change > 0
+          ? Icons.arrow_upward_rounded
+          : (change < 0 ? Icons.arrow_downward_rounded : Icons.remove_rounded);
+      valueWidget = Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            detail.previousGrade!,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.55),
+              fontWeight: FontWeight.w600,
+              decoration: TextDecoration.lineThrough,
+            ),
+          ),
+          const SizedBox(width: 6),
+          Icon(chevIcon, size: 14, color: chevColor),
+          const SizedBox(width: 6),
+          Text(
+            detail.grade,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+              color: gradeColor,
+            ),
+          ),
+        ],
+      );
+    } else {
+      valueWidget = Text(
+        detail.grade,
+        style: theme.textTheme.bodyMedium?.copyWith(
+          fontWeight: FontWeight.w700,
+          color: gradeColor,
+        ),
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(
+            '등급',
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+            ),
+          ),
+          valueWidget,
+        ],
+      ),
+    );
+  }
+
+  Widget _buildTrendBanner(ThemeData theme, RiderDetail detail) {
+    final trend = detail.conditionTrend;
+    final (icon, color, label) = switch (trend) {
+      RiderConditionTrend.rising => (
+        Icons.trending_up_rounded,
+        const Color(0xFF22C55E),
+        '상승세 · 최근 폼이 좋습니다'
+      ),
+      RiderConditionTrend.falling => (
+        Icons.trending_down_rounded,
+        const Color(0xFFEF4444),
+        '하락세 · 최근 폼이 저조합니다'
+      ),
+      RiderConditionTrend.stable => (
+        Icons.trending_flat_rounded,
+        const Color(0xFFF59E0B),
+        '유지 · 통산 평균 수준'
+      ),
+      RiderConditionTrend.unknown => (
+        Icons.help_outline_rounded,
+        Colors.white54,
+        '데이터 부족'
+      ),
+    };
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, color: color, size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              label,
+              style: TextStyle(
+                color: color,
+                fontSize: 13,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildRecentRacesTable(
+    ThemeData theme,
+    List<RiderRaceRecord> races,
+  ) {
+    final onSurface = theme.colorScheme.onSurface;
+    Widget headerText(String s, {double flex = 1}) => Expanded(
+          flex: (flex * 10).round(),
+          child: Text(
+            s,
+            style: TextStyle(
+              color: onSurface.withValues(alpha: 0.55),
+              fontSize: 11,
+              fontWeight: FontWeight.w700,
+              letterSpacing: 0.3,
+            ),
+          ),
+        );
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+          child: Row(
+            children: [
+              headerText('일자', flex: 1.3),
+              headerText('경기', flex: 0.9),
+              headerText('등급', flex: 0.7),
+              headerText('순위', flex: 0.7),
+              Expanded(
+                flex: 10,
+                child: Text(
+                  '득점',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    color: onSurface.withValues(alpha: 0.55),
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Divider(
+            height: 1, color: onSurface.withValues(alpha: 0.08)),
+        ...races.map((race) {
+          final rankColor = switch (race.rank) {
+            1 => const Color(0xFFFBBF24),
+            2 => const Color(0xFFA3A3A3),
+            3 => const Color(0xFFCD7F32),
+            _ => onSurface.withValues(alpha: 0.7),
+          };
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+            child: Row(
+              children: [
+                Expanded(
+                  flex: 13,
+                  child: Text(
+                    _formatDate(race.date),
+                    style: TextStyle(
+                      color: onSurface.withValues(alpha: 0.85),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 9,
+                  child: Text(
+                    race.raceNo > 0 ? '${race.raceNo}R' : '-',
+                    style: TextStyle(
+                      color: onSurface.withValues(alpha: 0.75),
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 7,
+                  child: Text(
+                    race.grade,
+                    style: TextStyle(
+                      color: _gradeColor(race.grade),
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 7,
+                  child: Text(
+                    race.rank != null ? '${race.rank}착' : '-',
+                    style: TextStyle(
+                      color: rankColor,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                Expanded(
+                  flex: 10,
+                  child: Text(
+                    race.score != null
+                        ? race.score!.toStringAsFixed(1)
+                        : '-',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: onSurface,
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          );
+        }),
+      ],
+    );
+  }
+
+  Widget _buildVenueBreakdown(
+    ThemeData theme,
+    Map<int, VenueRecord> venues,
+  ) {
+    final sorted = venues.entries.toList()
+      ..sort((a, b) => b.value.total.compareTo(a.value.total));
+    const venueColors = {
+      1: Color(0xFFFBBF24),
+      2: Color(0xFF22C55E),
+      3: Color(0xFF3B82F6),
+    };
+    return Column(
+      children: sorted.map((e) {
+        final color = venueColors[e.key] ?? Colors.white70;
+        final label = switch (e.key) {
+          1 => '광명',
+          2 => '창원',
+          3 => '부산',
+          _ => '기타',
+        };
+        final rec = e.value;
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 6),
+          child: Row(
+            children: [
+              Container(
+                width: 6,
+                height: 28,
+                decoration: BoxDecoration(
+                  color: color,
+                  borderRadius: BorderRadius.circular(3),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      label,
+                      style: TextStyle(
+                        color: color,
+                        fontSize: 13.5,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '${rec.total}전 · ${rec.wins}승 · 입상 ${rec.podiums}회',
+                      style: TextStyle(
+                        color: theme.colorScheme.onSurface
+                            .withValues(alpha: 0.6),
+                        fontSize: 11.5,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  Text(
+                    '승률 ${rec.winRate.toStringAsFixed(1)}%',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  Text(
+                    '입상률 ${rec.podiumRate.toStringAsFixed(1)}%',
+                    style: TextStyle(
+                      color: theme.colorScheme.onSurface
+                          .withValues(alpha: 0.6),
+                      fontSize: 11,
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        );
+      }).toList(),
+    );
+  }
+
+  String _formatDate(String raw) {
+    if (raw.isEmpty) return '-';
+    // "2026.06.15" → "06.15"
+    if (raw.contains('.') && raw.length >= 10) {
+      return raw.substring(5);
+    }
+    // "20260615" → "06.15"
+    if (raw.length == 8 && int.tryParse(raw) != null) {
+      return '${raw.substring(4, 6)}.${raw.substring(6, 8)}';
+    }
+    return raw;
   }
 
   Widget _buildChip(BuildContext context, String label, Color color) {
