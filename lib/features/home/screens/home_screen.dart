@@ -757,6 +757,18 @@ class _HomeDrawer extends ConsumerWidget {
                       'com.boat_racing',
                     ),
                   ),
+                  const SizedBox(height: 8),
+                  _DrawerItem(
+                    icon: Icons.confirmation_number_rounded,
+                    iconColor: const Color(0xFF10B981),
+                    label: '로또Plus',
+                    subtitle: 'AI 추천 로또번호 · 당첨번호 확인',
+                    isExternal: true,
+                    onTap: () => _openPlayStore(
+                      context,
+                      'com.inovixa.lotto',
+                    ),
+                  ),
                   const SizedBox(height: 20),
                   const _DrawerSectionHeader(
                     icon: Icons.dashboard_customize_rounded,
