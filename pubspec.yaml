@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.8+8
+version: 1.0.35+35
 
 environment:
   sdk: ^3.9.0
@@ -43,7 +43,10 @@ dependencies:
   html: ^0.15.4
   webview_flutter: ^4.10.0
   video_player: ^2.9.2
-  in_app_purchase: ^3.2.3
+  # in_app_purchase_android 0.5.x 는 com.android.billingclient:billing:8.0.0 을 사용한다.
+  # Play Console 정책(2026-08-31 부터 PBL 8.0.0 이상)을 만족시키기 위해 하위 버전으로 내리지 않는다.
+  in_app_purchase: ^3.3.0
+  in_app_purchase_android: ^0.5.3
   url_launcher: ^6.3.2
   geolocator: ^13.0.2
 
