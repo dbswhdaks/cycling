@@ -2,8 +2,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/constants/iap_constants.dart';
-import '../../../core/data/mock_data.dart';
 import '../../../core/services/cycling_api_service.dart';
+import '../../../core/services/kcycle_result_service.dart';
 import '../../../core/services/prediction_engine.dart';
 import '../../../core/services/supabase_backup_service.dart';
 import '../../../features/admin/providers/admin_auth_provider.dart';
@@ -20,6 +20,26 @@ String _venueName(int code) => ApiConstants.venueName(code);
 final cyclingApiServiceProvider = Provider<CyclingApiService>((ref) {
   return CyclingApiService();
 });
+
+final kcycleResultServiceProvider = Provider<KcycleResultService>((ref) {
+  return KcycleResultService();
+});
+
+/// 아직 시행되지 않은 경주
+class RaceNotYetException implements Exception {
+  const RaceNotYetException();
+
+  @override
+  String toString() => 'NOT_YET';
+}
+
+/// 공개된 데이터를 찾지 못한 경주
+class RaceDataUnavailableException implements Exception {
+  const RaceDataUnavailableException();
+
+  @override
+  String toString() => 'NO_DATA';
+}
 
 final supabaseBackupProvider = Provider<SupabaseBackupService>((ref) {
   return SupabaseBackupService();
@@ -61,17 +81,6 @@ String dateToYmd(DateTime d) {
 }
 
 String get todayYmd => dateToYmd(DateTime.now());
-
-bool _isRaceDay(String dateStr) {
-  if (dateStr.length < 8) return false;
-  final year = int.tryParse(dateStr.substring(0, 4)) ?? 0;
-  final month = int.tryParse(dateStr.substring(4, 6)) ?? 0;
-  final day = int.tryParse(dateStr.substring(6, 8)) ?? 0;
-  final weekday = DateTime(year, month, day).weekday;
-  return weekday == DateTime.friday ||
-      weekday == DateTime.saturday ||
-      weekday == DateTime.sunday;
-}
 
 bool _isRaceDateNotFinished(String dateStr) {
   final now = DateTime.now();
@@ -151,6 +160,16 @@ final raceListProvider =
         return DataWithSource(data: result.data!, fromApi: true);
       }
 
+      // 시행하지 않은 것이 확인된 날은 오래된 캐시를 되살리지 않는다.
+      if (await api.venueRaced(meet: meet, date: params.date) == false) {
+        if (kDebugMode) {
+          debugPrint(
+            '[Provider] raceList($venueName, ${params.date}): 미시행 확인',
+          );
+        }
+        return const DataWithSource(data: <Race>[], fromApi: true);
+      }
+
       final cached = await backup.loadRaces(
         venueCode: params.venue,
         date: params.date,
@@ -165,24 +184,10 @@ final raceListProvider =
         return DataWithSource(data: cached, fromApi: false, apiError: '캐시 데이터');
       }
 
-      if (_isRaceDay(params.date)) {
-        if (kDebugMode) {
-          debugPrint(
-            '[Provider] raceList($venueName, ${params.date}): '
-            'API/캐시 없음 → 경기일 목업 (${result.errorMessage})',
-          );
-        }
-        return DataWithSource(
-          data: MockData.racesFor(params.venue, params.date),
-          fromApi: false,
-          apiError: result.errorMessage,
-        );
-      }
-
       if (kDebugMode) {
         debugPrint(
           '[Provider] raceList($venueName, ${params.date}): '
-          'API/캐시 없음 → 비경기일 빈 목록 (${result.errorMessage})',
+          'API/캐시 없음 → 빈 목록 (${result.errorMessage})',
         );
       }
       return DataWithSource(
@@ -192,7 +197,7 @@ final raceListProvider =
       );
     });
 
-/// 출주표 - API → Supabase 캐시 → 목업
+/// 출주표 - API·크롤링 → Supabase 캐시
 final raceEntriesProvider =
     FutureProvider.family<
       DataWithSource<List<RaceEntry>>,
@@ -226,6 +231,11 @@ final raceEntriesProvider =
         return DataWithSource(data: organResult.data!, fromApi: true);
       }
 
+      // 시행하지 않은 것이 확인된 날은 오래된 캐시를 되살리지 않는다.
+      if (await api.venueRaced(meet: params.venue, date: params.date) == false) {
+        return const DataWithSource(data: <RaceEntry>[], fromApi: true);
+      }
+
       final cached = await backup.loadEntries(
         venueCode: params.venue,
         date: params.date,
@@ -244,32 +254,30 @@ final raceEntriesProvider =
       if (kDebugMode) {
         debugPrint(
           '[Provider] entries($venueName, ${params.date}, R${params.raceNo}): '
-          '목업 데이터 (${organResult.errorMessage})',
+          '출주표 없음 (${organResult.errorMessage})',
         );
       }
       return DataWithSource(
-        data: MockData.entriesFor(params.raceNo, params.venue),
+        data: const <RaceEntry>[],
         fromApi: false,
         apiError: organResult.errorMessage,
       );
     });
 
-/// 배당률 - API → 목업
+/// 배당률 - 경주결과의 확정 배당
+///
+/// 확정 배당은 착순과 같은 레코드에서 파싱되므로 경주 결과와 항상 일치한다.
+/// 아직 확정되지 않은 경주는 빈 배당을 반환한다.
 final oddsProvider =
     FutureProvider.family<Odds, ({int venue, String date, int raceNo})>((
       ref,
       params,
     ) async {
-      final api = ref.watch(cyclingApiServiceProvider);
-      final result = await api.fetchPayoff(
-        meet: params.venue,
-        date: params.date,
-        rcNo: params.raceNo,
-      );
-      if (result.isSuccess && result.data != null) {
-        return result.data!;
+      try {
+        return (await ref.watch(raceResultProvider(params).future)).payoff;
+      } catch (_) {
+        return const Odds();
       }
-      return MockData.oddsFor(params.raceNo, params.venue);
     });
 
 /// 이름 Set 생성 (trim + 공백 제거로 비교 안정성 확보)
@@ -278,7 +286,10 @@ Set<String> _normalizeNames(Iterable<String> names) => names
     .where((n) => n.isNotEmpty)
     .toSet();
 
-/// 경주 결과 - 출주표와 일치하는 결과만 사용, 아니면 출주표 기반 생성
+/// 경주 결과 - 착순과 확정 배당을 함께 담은 단일 소스
+///
+/// 출주표가 실제 API 데이터일 때만 선수명 교차 검증을 수행한다.
+/// 출주표가 목업이면 검증 자체가 무의미하므로 API 결과를 그대로 신뢰한다.
 final raceResultProvider =
     FutureProvider.family<RaceResult, ({int venue, String date, int raceNo})>((
       ref,
@@ -292,7 +303,9 @@ final raceResultProvider =
           raceNo: params.raceNo,
         )).future,
       );
-      final entryNames = _normalizeNames(entries.data.map((e) => e.riderName));
+      final entryNames = entries.fromApi
+          ? _normalizeNames(entries.data.map((e) => e.riderName))
+          : <String>{};
 
       final result = await api.fetchRaceResult(
         meet: params.venue,
@@ -301,38 +314,37 @@ final raceResultProvider =
       );
       if (result.isSuccess && result.data != null) {
         final matched = result.data!
-            .where((r) => r.raceNo == params.raceNo)
+            .where((r) => r.raceNo == params.raceNo && r.hasPlacings)
             .toList();
-        if (matched.isNotEmpty && entryNames.isNotEmpty) {
+        if (matched.isNotEmpty) {
           final r = matched.first;
-          final names = _normalizeNames({
-            r.first,
-            r.second,
-            r.third,
-          }).map((n) => n.replaceAll(RegExp(r'[①②③④⑤⑥⑦⑧⑨⑩\s]'), '')).toSet();
-          if (names.intersection(entryNames).isNotEmpty) {
+          final names = _normalizeNames({r.first, r.second, r.third});
+          if (entryNames.isEmpty || names.intersection(entryNames).isNotEmpty) {
             return r;
           }
-          if (kDebugMode)
+          if (kDebugMode) {
             debugPrint(
               '[Provider] raceResult: API 결과 $names ≠ 출주표 $entryNames',
             );
+          }
         }
       }
 
       if (_isRaceDateNotFinished(params.date)) {
-        throw Exception('NOT_YET');
+        throw const RaceNotYetException();
       }
-      return MockData.raceResultFor(params.raceNo, entries.data, params.venue);
+      throw const RaceDataUnavailableException();
     });
 
-/// 경주 순위 목록 - 해당 경주 선수만 포함된 결과만 사용, 아니면 출주표 기반 생성
+/// 경주 순위 목록
+///
+/// 1순위: KCYCLE 상세 착순표 (배번·착차·주행시간·승부수까지 제공)
+/// 2순위: 공공데이터 순위 API (선수명·착순만 제공, 배번은 출주표로 보강)
 final raceRankProvider =
     FutureProvider.family<
       List<Map<String, dynamic>>,
       ({int venue, String date, int raceNo})
     >((ref, params) async {
-      final api = ref.watch(cyclingApiServiceProvider);
       final entries = await ref.watch(
         raceEntriesProvider((
           venue: params.venue,
@@ -340,35 +352,157 @@ final raceRankProvider =
           raceNo: params.raceNo,
         )).future,
       );
-      final entryCount = entries.data.length;
+      final result = await _tryRaceResult(ref, params);
 
-      final result = await api.fetchRaceRank(
+      if (result != null) {
+        final details = await _fetchKcycleDetails(ref, params, result);
+        if (details.isNotEmpty) {
+          if (kDebugMode) {
+            debugPrint('[Provider] raceRank: KCYCLE 상세 ${details.length}건 사용');
+          }
+          return _withGrades(details, entries);
+        }
+      }
+
+      final api = ref.watch(cyclingApiServiceProvider);
+      final rankResult = await api.fetchRaceRank(
         meet: params.venue,
         date: params.date,
         rcNo: params.raceNo,
       );
-
-      if (result.isSuccess && result.data != null && result.data!.isNotEmpty) {
-        final allRanks = result.data!;
-
-        if (allRanks.length <= entryCount + 3) {
-          if (kDebugMode)
-            debugPrint(
-              '[Provider] raceRank: API ${allRanks.length}건 (경주별 데이터) 사용',
-            );
-          return allRanks;
+      if (rankResult.isSuccess &&
+          rankResult.data != null &&
+          rankResult.data!.isNotEmpty) {
+        if (kDebugMode) {
+          debugPrint('[Provider] raceRank: 공공 API ${rankResult.data!.length}건 사용');
         }
-        if (kDebugMode)
-          debugPrint(
-            '[Provider] raceRank: API ${allRanks.length}건 (연도 통합) → 출주표 기반 생성',
-          );
+        return _withGrades(
+          _withBackNumbers(rankResult.data!, entries, result),
+          entries,
+        );
       }
 
       if (_isRaceDateNotFinished(params.date)) {
-        throw Exception('NOT_YET');
+        throw const RaceNotYetException();
       }
-      return MockData.raceRanksFor(params.raceNo, entries.data, params.venue);
+      throw const RaceDataUnavailableException();
     });
+
+/// KCYCLE 상세 착순을 회차를 바꿔가며 조회하고, 확정 착순과 일치하는 것만 채택한다.
+///
+/// KCYCLE URL의 회차는 전국 공통(광명 기준) 번호인 반면 공공 API는 경기장별
+/// 회차를 주므로, 창원·부산은 같은 날 광명의 회차를 먼저 시도해야 한다.
+Future<List<Map<String, dynamic>>> _fetchKcycleDetails(
+  Ref ref,
+  ({int venue, String date, int raceNo}) params,
+  RaceResult result,
+) async {
+  final candidates = <({int round, int dayOrd})>[];
+
+  void addCandidate(int round, int dayOrd) {
+    if (round <= 0 || dayOrd <= 0) return;
+    if (candidates.any((c) => c.round == round && c.dayOrd == dayOrd)) return;
+    candidates.add((round: round, dayOrd: dayOrd));
+  }
+
+  if (params.venue != 1) {
+    final reference = await _tryRaceResult(ref, (
+      venue: 1,
+      date: params.date,
+      raceNo: 1,
+    ));
+    if (reference != null) addCandidate(reference.round, reference.dayOrd);
+  }
+  addCandidate(result.round, result.dayOrd);
+
+  final service = ref.watch(kcycleResultServiceProvider);
+  final year = int.parse(params.date.substring(0, 4));
+
+  for (final candidate in candidates) {
+    final rows = await service.fetchRankDetails(
+      year: year,
+      round: candidate.round,
+      dayOrd: candidate.dayOrd,
+      meet: params.venue,
+      raceNo: params.raceNo,
+    );
+    if (_matchesResult(rows, result)) return rows;
+    if (kDebugMode && rows.isNotEmpty) {
+      debugPrint('[Provider] KCYCLE ${candidate.round}회 ${candidate.dayOrd}일차: '
+          '착순 불일치로 폐기');
+    }
+  }
+  return const [];
+}
+
+/// 크롤링한 착순표가 확정 결과의 1착(배번·선수명)과 일치하는지 확인한다.
+bool _matchesResult(List<Map<String, dynamic>> rows, RaceResult result) {
+  if (rows.isEmpty) return false;
+  if (result.firstNo <= 0 || result.first.isEmpty) return false;
+
+  return rows.any(
+    (r) =>
+        r['back_no'] == result.firstNo &&
+        _nameKey(r['racer_nm']?.toString() ?? '') == _nameKey(result.first),
+  );
+}
+
+String _nameKey(String name) => name.trim().replaceAll(' ', '');
+
+/// 착순 데이터에 없는 등급을 출주표에서 채운다.
+List<Map<String, dynamic>> _withGrades(
+  List<Map<String, dynamic>> ranks,
+  DataWithSource<List<RaceEntry>> entries,
+) {
+  final gradeByName = {
+    for (final e in entries.data)
+      if (e.grade.isNotEmpty) _nameKey(e.riderName): e.grade,
+  };
+  if (gradeByName.isEmpty) return ranks;
+
+  return ranks.map((r) {
+    if ((r['racer_grd_cd']?.toString() ?? '').isNotEmpty) return r;
+    final grade = gradeByName[_nameKey(r['racer_nm']?.toString() ?? '')];
+    return {...r, if (grade != null) 'racer_grd_cd': grade};
+  }).toList();
+}
+
+/// 공공 순위 API는 배번을 주지 않으므로 출주표·경주결과의 선수명으로 배번을 채운다.
+List<Map<String, dynamic>> _withBackNumbers(
+  List<Map<String, dynamic>> ranks,
+  DataWithSource<List<RaceEntry>> entries,
+  RaceResult? result,
+) {
+  final backNoByName = <String, int>{
+    for (final e in entries.data) _nameKey(e.riderName): e.lineNo,
+  };
+  if (result != null) {
+    for (final placing in [
+      (result.first, result.firstNo),
+      (result.second, result.secondNo),
+      (result.third, result.thirdNo),
+    ]) {
+      final name = _nameKey(placing.$1);
+      if (name.isNotEmpty && placing.$2 > 0) backNoByName[name] = placing.$2;
+    }
+  }
+
+  return ranks.map((r) {
+    final backNo = backNoByName[_nameKey(r['racer_nm']?.toString() ?? '')];
+    return {...r, if (backNo != null) 'back_no': backNo};
+  }).toList();
+}
+
+Future<RaceResult?> _tryRaceResult(
+  Ref ref,
+  ({int venue, String date, int raceNo}) params,
+) async {
+  try {
+    return await ref.watch(raceResultProvider(params).future);
+  } catch (_) {
+    return null;
+  }
+}
 
 /// AI 예측 결과 - 출주표 기반 로컬 예측 + Supabase 백업
 final predictionProvider =

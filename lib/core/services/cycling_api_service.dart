@@ -38,6 +38,9 @@ class CyclingApiService {
   /// 연도별 전체 로드 완료 플래그
   final Set<int> _loadedYears = {};
 
+  /// 진행 중인 연도별 출주표 로드 (동시 호출이 API를 중복 요청하지 않도록)
+  final Map<int, Future<void>> _organLoadFutures = {};
+
   /// 날짜별 스크래핑 데이터 캐시 (key: "date_meet")
   final Map<String, List<Map<String, dynamic>>> _scrapeCache = {};
 
@@ -60,7 +63,11 @@ class CyclingApiService {
     if (_organCache.containsKey(key)) return _organCache[key]!;
 
     if (!_loadedYears.contains(year)) {
-      await _loadAllVenues(year);
+      try {
+        await (_organLoadFutures[year] ??= _loadAllVenues(year));
+      } finally {
+        _organLoadFutures.remove(year);
+      }
     }
 
     return _organCache[key] ?? [];
@@ -145,8 +152,9 @@ class CyclingApiService {
   }
 
 
-  /// 크롤링 진행 중 Future (중복 요청 방지)
-  Future<Map<int, List<Map<String, dynamic>>>>? _scrapingFuture;
+  /// 진행 중인 날짜별 크롤링 Future (같은 날짜의 중복 요청만 합친다)
+  final Map<String, Future<Map<int, List<Map<String, dynamic>>>>>
+      _scrapingFutures = {};
 
   /// 날짜별 스크래핑 데이터 조회 (캐시 활용, 중복 요청 방지).
   Future<List<Map<String, dynamic>>> _getScrapedData(int meet, String date) async {
@@ -154,22 +162,168 @@ class CyclingApiService {
     if (_scrapeCache.containsKey(cacheKey)) return _scrapeCache[cacheKey]!;
 
     try {
-      // 이미 같은 날짜를 스크래핑 중이면 기존 Future 재사용
-      _scrapingFuture ??= _scraper.scrapeRaceData(date);
-      final scraped = await _scrapingFuture!;
-      _scrapingFuture = null;
+      final scraped = await (_scrapingFutures[date] ??=
+          _scraper.scrapeRaceData(date));
+      final roster = await _fetchDayRoster(date);
 
       for (final entry in scraped.entries) {
-        _scrapeCache['${date}_${entry.key}'] = entry.value;
+        _scrapeCache['${date}_${entry.key}'] =
+            validateScrapedRaces(entry.value, date, entry.key, roster);
       }
 
       return _scrapeCache[cacheKey] ?? [];
     } catch (e) {
-      _scrapingFuture = null;
       if (kDebugMode) debugPrint('[Scrape] _getScrapedData 실패: $e');
       return [];
+    } finally {
+      _scrapingFutures.remove(date);
     }
   }
+
+  /// 날짜별 실제 편성 (경기장 → 경주번호 → 선수명)
+  final Map<String, Map<int, Map<int, Set<String>>>> _dayRosterCache = {};
+
+  /// 해당 날짜에 실제로 시행된 경주 편성을 순위 API에서 가져온다.
+  ///
+  /// 순위 API는 `meet_nm`을 서버에서 걸러주지 않으므로 한 번의 호출로
+  /// 그날 전 경기장 편성을 얻을 수 있다. 미시행(미래) 날짜는 빈 맵을 반환한다.
+  Future<Map<int, Map<int, Set<String>>>> _fetchDayRoster(String date) async {
+    if (_dayRosterCache.containsKey(date)) return _dayRosterCache[date]!;
+
+    final roster = <int, Map<int, Set<String>>>{};
+    try {
+      final res = await _dio.get(ApiConstants.raceRank, queryParameters: {
+        ..._baseParams(numOfRows: 1000),
+        'stnd_year': date.substring(0, 4),
+        'race_day': date,
+      });
+
+      if (_checkApiError(res.data) == null) {
+        for (final item in _extractItems(res.data)) {
+          if (item is! Map) continue;
+          if (item['race_day']?.toString() != date) continue;
+
+          final meet = _meetCodeOf(item['meet_nm']?.toString() ?? '');
+          final raceNo = int.tryParse(item['race_no']?.toString() ?? '');
+          final name = _normalizeName(item['racer_nm']?.toString() ?? '');
+          if (meet == null || raceNo == null || name.isEmpty) continue;
+
+          ((roster[meet] ??= {})[raceNo] ??= <String>{}).add(name);
+        }
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[API] 편성 조회 실패($date): $e');
+    }
+
+    _dayRosterCache[date] = roster;
+    return roster;
+  }
+
+  /// 해당 날짜에 이 경기장이 실제로 경주를 시행했는지 확인한다.
+  ///
+  /// 아직 시행 전이라 편성 기록 자체가 없으면 판단할 수 없으므로 null을 반환한다.
+  Future<bool?> venueRaced({required int meet, required String date}) async {
+    final roster = await _fetchDayRoster(date);
+    if (roster.isEmpty) return null;
+    return roster.containsKey(meet);
+  }
+
+  int? _meetCodeOf(String venueName) {
+    final name = venueName.trim();
+    for (final code in [1, 2, 3]) {
+      if (ApiConstants.venueApiName(code) == name) return code;
+    }
+    return null;
+  }
+
+  /// 크롤링 결과를 실제 편성과 대조해 존재하지 않는 경주를 제거한다.
+  ///
+  /// 크롤링 원본에는 그날 시행되지 않은 경주가 섞여 들어오는 사례가 있다.
+  /// 시행 기록이 있으면 그것을 기준으로 삼고, 아직 시행 전이라 기록이 없으면
+  /// 광명 출주표와 대조하는 최소 검증만 적용한다.
+  @visibleForTesting
+  List<Map<String, dynamic>> validateScrapedRaces(
+    List<Map<String, dynamic>> scraped,
+    String date,
+    int meet,
+    Map<int, Map<int, Set<String>>> roster,
+  ) {
+    if (scraped.isEmpty || roster.isEmpty) {
+      return _dropMislabeledRaces(scraped, date, meet);
+    }
+
+    final venueName = ApiConstants.venueName(meet);
+    final held = roster[meet];
+    if (held == null || held.isEmpty) {
+      if (kDebugMode) {
+        debugPrint('[Scrape] $venueName $date: 시행 기록 없음 → 크롤링 결과 폐기');
+      }
+      return const [];
+    }
+
+    final kept = scraped
+        .where((m) => held.containsKey(int.tryParse(m['race_no']?.toString() ?? '')))
+        .toList();
+
+    if (kDebugMode && kept.length != scraped.length) {
+      debugPrint('[Scrape] $venueName $date: 편성에 없는 경주 제외 '
+          '(${scraped.length} → ${kept.length}명분)');
+    }
+    return kept;
+  }
+
+  /// 크롤링 원본이 광명 경주를 창원·부산으로 잘못 표기하는 경우가 있어,
+  /// 같은 날 광명 출주표에 있는 선수로 채워진 경주는 제외한다.
+  ///
+  /// 한 선수가 하루에 두 경기장에서 뛸 수 없으므로 선수 명단이 곧 검증 수단이 된다.
+  /// 광명 출주표를 아직 받지 못했다면 걸러내지 않는다.
+  List<Map<String, dynamic>> _dropMislabeledRaces(
+    List<Map<String, dynamic>> scraped,
+    String date,
+    int meet,
+  ) {
+    if (scraped.isEmpty) return scraped;
+
+    final year = int.tryParse(date.substring(0, 4));
+    final gwangmyeong = _organCache['${year}_1'];
+    if (gwangmyeong == null || gwangmyeong.isEmpty) return scraped;
+
+    final targetYmd = _toApiDateFormat(date);
+    final gwangmyeongNames = <String>{
+      for (final m in gwangmyeong)
+        if (m['race_ymd']?.toString() == targetYmd)
+          _normalizeName(m['racer_nm']?.toString() ?? ''),
+    }..remove('');
+    if (gwangmyeongNames.isEmpty) return scraped;
+
+    final byRaceNo = <String, List<Map<String, dynamic>>>{};
+    for (final item in scraped) {
+      byRaceNo.putIfAbsent(item['race_no']?.toString() ?? '', () => []).add(item);
+    }
+
+    final kept = <Map<String, dynamic>>[];
+    final dropped = <String>[];
+    for (final entry in byRaceNo.entries) {
+      final names = entry.value
+          .map((m) => _normalizeName(m['racer_nm']?.toString() ?? ''))
+          .where((n) => n.isNotEmpty)
+          .toList();
+      final overlap = names.where(gwangmyeongNames.contains).length;
+      if (names.isNotEmpty && overlap * 2 > names.length) {
+        dropped.add(entry.key);
+        continue;
+      }
+      kept.addAll(entry.value);
+    }
+
+    if (kDebugMode && dropped.isNotEmpty) {
+      debugPrint('[Scrape] ${ApiConstants.venueName(meet)} $date: '
+          '광명 선수로 채워진 ${dropped.join(",")}경주 제외');
+    }
+    return kept;
+  }
+
+  String _normalizeName(String name) => name.trim().replaceAll(' ', '');
 
   /// 캐시를 무효화하여 다음 호출 시 API를 다시 요청하게 한다.
   void invalidateOrganCache({int? year}) {
@@ -182,7 +336,10 @@ class CyclingApiService {
       _organCache.clear();
       _loadedYears.clear();
     }
+    _organLoadFutures.clear();
     _scrapeCache.clear();
+    _scrapingFutures.clear();
+    _dayRosterCache.clear();
     _scraper.clearCache();
   }
 
@@ -254,42 +411,79 @@ class CyclingApiService {
 
   // ─────────────────────────── 경주 결과 ───────────────────────────
 
+  /// 경주결과(착순 + 확정배당)를 조회한다.
+  ///
+  /// 이 API는 `stnd_de`·`rcNo`·`meet` 파라미터를 인식하지 못하고
+  /// `meet_nm`·`race_no`만 서버 필터로 동작한다. 또한 응답의 `race_ymd`가
+  /// "MMDD" 형식이므로 날짜는 클라이언트에서 직접 걸러야 한다.
   Future<ApiResult<List<RaceResult>>> fetchRaceResult({
     required int meet,
     required String date,
     int? rcNo,
   }) async {
     try {
-      final params = {
-        ..._baseParams(),
-        'meet': meet,
-        'stnd_yr': date.substring(0, 4),
-        'stnd_de': date,
-        if (rcNo != null) 'rcNo': rcNo,
-      };
+      final items = await _fetchResultPages(
+        year: date.substring(0, 4),
+        meet: meet,
+        rcNo: rcNo,
+      );
 
-      final res = await _dio.get(ApiConstants.raceResult, queryParameters: params);
-      final error = _checkApiError(res.data);
-      if (error != null) return ApiResult.failure(error);
-
-      final items = _extractItems(res.data);
-      final all = items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
-
-      final targetYmd = _toApiDateFormat(date);
-      final filtered = all.where((m) {
-        final ymd = m['race_ymd']?.toString() ?? m['race_de']?.toString() ?? '';
-        if (ymd.isEmpty) return true;
-        return ymd == targetYmd || ymd == date || ymd.replaceAll('.', '') == date;
+      final targetMmdd = _toMmdd(date);
+      final venue = ApiConstants.venueApiName(meet);
+      final matched = items.where((m) {
+        if (_toMmdd(m['race_ymd']?.toString() ?? '') != targetMmdd) return false;
+        final nm = m['meet_nm']?.toString().trim() ?? '';
+        return nm.isEmpty || nm == venue;
       }).toList();
 
-      final source = filtered.isNotEmpty ? filtered : all;
-      final results = source.map((e) => _parseRaceResult(e)).toList();
-      return ApiResult.success(results);
+      if (kDebugMode) {
+        debugPrint('[API] fetchRaceResult($venue, $date, R$rcNo): '
+            '${items.length}건 중 ${matched.length}건 일치');
+      }
+
+      return ApiResult.success(matched.map(_parseRaceResult).toList());
     } on DioException catch (e) {
       return ApiResult.failure(_dioErrorMsg(e));
     } catch (e) {
       return ApiResult.failure('파싱 오류: $e');
     }
+  }
+
+  /// 경주결과 원시 데이터를 페이징 조회 (연도·경기장·경주번호 기준)
+  Future<List<Map<String, dynamic>>> _fetchResultPages({
+    required String year,
+    required int meet,
+    int? rcNo,
+  }) async {
+    final items = <Map<String, dynamic>>[];
+    int page = 1;
+    int totalCount = 0;
+
+    while (true) {
+      final params = {
+        ..._baseParams(pageNo: page),
+        'stnd_yr': year,
+        'meet_nm': ApiConstants.venueApiName(meet),
+        if (rcNo != null) 'race_no': rcNo.toString().padLeft(2, '0'),
+      };
+
+      final res = await _dio.get(ApiConstants.raceResult, queryParameters: params);
+      if (_checkApiError(res.data) != null) break;
+
+      if (page == 1) totalCount = _extractTotalCount(res.data);
+
+      final extracted = _extractItems(res.data);
+      if (extracted.isEmpty) break;
+
+      for (final item in extracted) {
+        if (item is Map) items.add(Map<String, dynamic>.from(item));
+      }
+
+      if (items.length >= totalCount || page >= 20) break;
+      page++;
+    }
+
+    return items;
   }
 
   // ─────────────────────────── 출주표 (캐시 기반) ───────────────────────────
@@ -350,30 +544,22 @@ class CyclingApiService {
 
   // ─────────────────────────── 배당률 ───────────────────────────
 
+  /// 확정 배당을 조회한다.
+  ///
+  /// 배당률 API(`SRVC_OD_API_CRA_PAYOFF`)는 경기장·조합 번호 없이 금액만 제공해
+  /// 착순과 대조할 수 없으므로, 착순과 같은 레코드에서 배당을 파싱하는
+  /// 경주결과 API를 사용한다.
   Future<ApiResult<Odds>> fetchPayoff({
     required int meet,
     required String date,
     required int rcNo,
   }) async {
-    try {
-      final params = {
-        ..._baseParams(),
-        'meet': meet,
-        'stnd_yr': date.substring(0, 4),
-        'rcNo': rcNo,
-      };
+    final result = await fetchRaceResult(meet: meet, date: date, rcNo: rcNo);
+    if (!result.isSuccess) return ApiResult.failure(result.errorMessage);
 
-      final res = await _dio.get(ApiConstants.payoff, queryParameters: params);
-      final error = _checkApiError(res.data);
-      if (error != null) return ApiResult.failure(error);
-
-      final odds = _parseOdds(res.data);
-      return ApiResult.success(odds);
-    } on DioException catch (e) {
-      return ApiResult.failure(_dioErrorMsg(e));
-    } catch (e) {
-      return ApiResult.failure('파싱 오류: $e');
-    }
+    final matched = result.data!.where((r) => r.raceNo == rcNo);
+    if (matched.isEmpty) return const ApiResult.success(Odds());
+    return ApiResult.success(matched.first.payoff);
   }
 
   // ─────────────────────────── 선수 상세 (연간 전체 기록 집계) ───────────────────────────
@@ -439,18 +625,25 @@ class CyclingApiService {
 
   // ─────────────────────────── 경주 순위 ───────────────────────────
 
+  /// 경주별 전체 착순을 조회한다.
+  ///
+  /// 파라미터명이 다른 API와 달라(`stnd_year`·`race_day`·`race_no`)
+  /// 잘못 지정하면 서버가 필터를 무시하고 전 연도 데이터를 반환한다.
+  /// `meet_nm`은 서버 필터로 동작하지 않아 여러 경기장이 섞여 오므로
+  /// 경기장 구분은 클라이언트에서 처리한다.
   Future<ApiResult<List<Map<String, dynamic>>>> fetchRaceRank({
     required int meet,
     required String date,
     required int rcNo,
   }) async {
     try {
+      final venue = ApiConstants.venueApiName(meet);
       final params = {
-        ..._baseParams(),
-        'meet': meet,
-        'stnd_yr': date.substring(0, 4),
-        'stnd_de': date,
-        'rcNo': rcNo,
+        ..._baseParams(numOfRows: 100),
+        'stnd_year': date.substring(0, 4),
+        'race_day': date,
+        'meet_nm': venue,
+        'race_no': rcNo.toString().padLeft(2, '0'),
       };
 
       final res = await _dio.get(ApiConstants.raceRank, queryParameters: params);
@@ -458,16 +651,38 @@ class CyclingApiService {
       if (error != null) return ApiResult.failure(error);
 
       final items = _extractItems(res.data);
-      final ranks = items.map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      final ranks = <Map<String, dynamic>>[];
+      for (final item in items) {
+        if (item is! Map) continue;
+        final m = Map<String, dynamic>.from(item);
+        if ((m['race_day']?.toString() ?? date) != date) continue;
+        if ((m['meet_nm']?.toString().trim() ?? venue) != venue) continue;
+        final raceNo = int.tryParse(m['race_no']?.toString() ?? '');
+        if (raceNo != null && raceNo != rcNo) continue;
+        ranks.add({
+          'rank': int.tryParse(m['race_rank']?.toString() ?? '') ?? 0,
+          'racer_nm': m['racer_nm']?.toString().trim() ?? '',
+          'racer_no': m['racer_no']?.toString() ?? '',
+          'back_no': '',
+          'racer_grd_cd': '',
+          'race_time': '',
+          'arrival_diff': '',
+        });
+      }
 
-      final targetYmd = _toApiDateFormat(date);
-      final filtered = ranks.where((r) {
-        final ymd = r['race_ymd']?.toString() ?? r['race_de']?.toString() ?? '';
-        if (ymd.isEmpty) return true;
-        return ymd == targetYmd || ymd == date || ymd.replaceAll('.', '') == date;
-      }).toList();
+      // 실격·기권(착순 0)은 뒤로 보내고 나머지는 착순 오름차순 정렬
+      ranks.sort((a, b) {
+        final ra = (a['rank'] as int) == 0 ? 99 : a['rank'] as int;
+        final rb = (b['rank'] as int) == 0 ? 99 : b['rank'] as int;
+        return ra.compareTo(rb);
+      });
 
-      return ApiResult.success(filtered.isNotEmpty ? filtered : ranks);
+      if (kDebugMode) {
+        debugPrint('[API] fetchRaceRank(${ApiConstants.venueApiName(meet)}, '
+            '$date, R$rcNo): ${ranks.length}명');
+      }
+
+      return ApiResult.success(ranks);
     } on DioException catch (e) {
       return ApiResult.failure(_dioErrorMsg(e));
     } catch (e) {
@@ -497,10 +712,17 @@ class CyclingApiService {
 
   // ═══════════════════════════ 파싱 헬퍼 ═══════════════════════════
 
-  /// "20260315" → "2026.03.15" (API race_ymd 형식)
+  /// "20260315" → "2026.03.15" (출주표 API race_ymd 형식)
   String _toApiDateFormat(String yyyymmdd) {
     if (yyyymmdd.length != 8) return yyyymmdd;
     return '${yyyymmdd.substring(0, 4)}.${yyyymmdd.substring(4, 6)}.${yyyymmdd.substring(6, 8)}';
+  }
+
+  /// "20260830"·"2026.08.30"·"0830" → "0830" (경주결과 API race_ymd 형식)
+  String _toMmdd(String raw) {
+    final digits = raw.replaceAll(RegExp(r'[^0-9]'), '');
+    if (digits.length < 4) return digits;
+    return digits.substring(digits.length - 4);
   }
 
   int _extractTotalCount(dynamic data) {
@@ -527,6 +749,7 @@ class CyclingApiService {
       raceMap[rn]!.distance ??= int.tryParse(m['race_len']?.toString() ?? '');
       raceMap[rn]!.departureTime ??= m['dptre_tm']?.toString();
       raceMap[rn]!.roundCount ??= int.tryParse(m['round_cnt']?.toString() ?? '');
+      raceMap[rn]!.grade ??= _raceGrade(m);
     }
 
     final sorted = raceMap.keys.toList()
@@ -546,8 +769,23 @@ class CyclingApiService {
               departureTime: raceMap[no]!.departureTime,
               racerCount: raceMap[no]!.count,
               roundCount: raceMap[no]!.roundCount ?? 0,
+              grade: raceMap[no]!.grade ?? '',
             ))
         .toList();
+  }
+
+  /// 출주표 항목에서 경주 등급(특선·우수·선발)을 뽑는다.
+  ///
+  /// 크롤링 데이터는 `race_grd`에 경주 등급을, `racer_grd_cd`에 선수 등급을 담고
+  /// 공공 API는 `racer_grd_cd`에 경주 등급을 담아 필드 의미가 다르다.
+  String? _raceGrade(Map<String, dynamic> item) {
+    const raceGrades = {'특선', '우수', '선발', '일반'};
+    for (final key in ['race_grd', 'racer_grd_cd']) {
+      final value = item[key]?.toString().trim() ?? '';
+      if (value.isEmpty) continue;
+      if (raceGrades.any(value.startsWith)) return value;
+    }
+    return null;
   }
 
   /// 출주표 아이템에서 RaceEntry 목록 생성
@@ -579,45 +817,102 @@ class CyclingApiService {
     return '';
   }
 
-  Odds _parseOdds(dynamic data) {
-    final items = _extractItems(data);
-    final win = <int, double>{};
-    final place = <String, double>{};
-    final quinella = <String, double>{};
-    final trio = <String, double>{};
-    final trifecta = <String, double>{};
-
-    for (final e in items) {
-      if (e is! Map) continue;
-      final m = Map<String, dynamic>.from(e);
-      final bkno = _intFrom(m, ['bkno', 'BKNO', 'back_no']);
-      final winRt = _doubleFrom(m, ['winRt', 'WIN_RT', 'pool1_val']);
-      final plcRt = _doubleFrom(m, ['plcRt', 'PLC_RT', 'pool2_val']);
-
-      if (bkno != null && winRt != null) win[bkno] = winRt;
-
-      final combo = _strFrom(m, ['combo', 'COMBO']);
-      if (combo != null) {
-        if (plcRt != null) place[combo] = plcRt;
-      }
-    }
-
-    return Odds(win: win, place: place, quinella: quinella, trio: trio, trifecta: trifecta);
-  }
-
   RaceResult _parseRaceResult(Map<String, dynamic> m) {
+    // 동착이면 한 필드에 두 선수가 들어오므로(예: "④문인재①송정욱")
+    // rank1~rank3을 펼친 뒤 앞에서부터 1·2·3착으로 배정한다.
+    final placings = [
+      ..._parsePlacings(m['rank1']?.toString()),
+      ..._parsePlacings(m['rank2']?.toString()),
+      ..._parsePlacings(m['rank3']?.toString()),
+    ];
+    ({int no, String name}) at(int i) =>
+        i < placings.length ? placings[i] : (no: 0, name: '');
+
     return RaceResult(
       raceNo: _intFrom(m, ['race_no', 'rcNo', 'RACE_NO']) ?? 0,
-      first: _strFrom(m, ['rank1_nm', 'rank1', 'RANK1_NM', 'first_nm']) ?? '',
-      firstNo: _intFrom(m, ['rank1_no', 'rank1_bkno', 'RANK1_NO', 'first_no']) ?? 0,
-      second: _strFrom(m, ['rank2_nm', 'rank2', 'RANK2_NM', 'second_nm']) ?? '',
-      secondNo: _intFrom(m, ['rank2_no', 'rank2_bkno', 'RANK2_NO', 'second_no']) ?? 0,
-      third: _strFrom(m, ['rank3_nm', 'rank3', 'RANK3_NM', 'third_nm']) ?? '',
-      thirdNo: _intFrom(m, ['rank3_no', 'rank3_bkno', 'RANK3_NO', 'third_no']) ?? 0,
-      winOdds: _doubleFrom(m, ['win_rt', 'winRt', 'WIN_RT', 'pool1_val']) ?? 0,
-      placeOdds: _doubleFrom(m, ['plc_rt', 'plcRt', 'PLC_RT', 'pool2_val']) ?? 0,
-      quinellaOdds: _doubleFrom(m, ['qnl_rt', 'qnlRt', 'QNL_RT', 'pool3_val']) ?? 0,
+      first: at(0).name,
+      firstNo: at(0).no,
+      second: at(1).name,
+      secondNo: at(1).no,
+      third: at(2).name,
+      thirdNo: at(2).no,
+      round: _intFrom(m, ['week_tcnt']) ?? 0,
+      dayOrd: _intFrom(m, ['day_tcnt']) ?? 0,
+      payoff: Odds(
+        win: _parseSingleOdds(m['pool1_val']?.toString()),
+        place: _parseSingleOdds(m['pool2_val']?.toString()),
+        exacta: _parseComboOdds(m['pool4_val']?.toString()),
+        quinella: _parseComboOdds(m['pool5_val']?.toString()),
+        trio: _parseComboOdds(m['pool6_val']?.toString()),
+        trifecta: _parseComboOdds(m['pool7_val']?.toString()),
+        exactaTrio: _parseComboOdds(m['pool8_val']?.toString()),
+      ),
     );
+  }
+
+  /// 착순 필드를 (선수번호, 이름) 목록으로 변환.
+  /// 선수번호는 원문자(①~⑳)로 이름 앞에 붙어 있다.
+  List<({int no, String name})> _parsePlacings(String? raw) {
+    if (raw == null || raw.trim().isEmpty) return [];
+
+    final placings = <({int no, String name})>[];
+    var currentNo = 0;
+    final name = StringBuffer();
+
+    void flush() {
+      final trimmed = name.toString().trim();
+      if (currentNo > 0 || trimmed.isNotEmpty) {
+        placings.add((no: currentNo, name: trimmed));
+      }
+      currentNo = 0;
+      name.clear();
+    }
+
+    for (final rune in raw.runes) {
+      final no = _circledNumber(rune);
+      if (no == null) {
+        name.writeCharCode(rune);
+        continue;
+      }
+      if (currentNo > 0 || name.isNotEmpty) flush();
+      currentNo = no;
+    }
+    flush();
+
+    return placings;
+  }
+
+  /// 원문자 숫자(①~⑳)를 정수로 변환. 일반 숫자도 허용한다.
+  int? _circledNumber(int rune) {
+    if (rune >= 0x2460 && rune <= 0x2473) return rune - 0x2460 + 1;
+    if (rune >= 0x31 && rune <= 0x39) return rune - 0x30;
+    return null;
+  }
+
+  static final _oddsPattern = RegExp(r'\(\s*([0-9]+(?:\s*-\s*[0-9]+)*)\s*\)\s*([0-9.]+)');
+
+  /// "(4)2.1 (1)1.9" → {4: 2.1, 1: 1.9}
+  Map<int, double> _parseSingleOdds(String? raw) {
+    final result = <int, double>{};
+    if (raw == null) return result;
+    for (final match in _oddsPattern.allMatches(raw)) {
+      final no = int.tryParse(match.group(1)!.replaceAll(' ', ''));
+      final value = double.tryParse(match.group(2)!);
+      if (no != null && value != null) result[no] = value;
+    }
+    return result;
+  }
+
+  /// "(1-4)47.5(4-1)149.6" → {"1-4": 47.5, "4-1": 149.6}
+  Map<String, double> _parseComboOdds(String? raw) {
+    final result = <String, double>{};
+    if (raw == null) return result;
+    for (final match in _oddsPattern.allMatches(raw)) {
+      final combo = match.group(1)!.replaceAll(' ', '');
+      final value = double.tryParse(match.group(2)!);
+      if (combo.contains('-') && value != null) result[combo] = value;
+    }
+    return result;
   }
 
   String? _checkApiError(dynamic data) {
@@ -703,26 +998,6 @@ class CyclingApiService {
     return null;
   }
 
-  double? _doubleFrom(Map<String, dynamic> m, List<String> keys) {
-    for (final k in keys) {
-      final v = m[k];
-      if (v == null) continue;
-      if (v is double) return v;
-      if (v is num) return v.toDouble();
-      if (v is String) return double.tryParse(v);
-    }
-    return null;
-  }
-
-  String? _strFrom(Map<String, dynamic> m, List<String> keys) {
-    for (final k in keys) {
-      final v = m[k];
-      if (v == null) continue;
-      if (v is String && v.isNotEmpty) return v;
-      return v.toString();
-    }
-    return null;
-  }
 }
 
 class _RaceAggregate {
@@ -730,4 +1005,5 @@ class _RaceAggregate {
   int? distance;
   String? departureTime;
   int? roundCount;
+  String? grade;
 }

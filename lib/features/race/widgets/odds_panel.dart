@@ -8,97 +8,66 @@ class OddsPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
+    final sections = <Widget>[
+      if (odds.win.isNotEmpty)
         _buildSection(
           context,
           title: '단승',
-          subtitle: '1등 맞추기',
-          child: Wrap(
-            alignment: WrapAlignment.start,
-            spacing: 8,
-            runSpacing: 8,
-            children: odds.win.entries.map((e) {
-              return _oddsChip(
-                context,
-                '${e.key}번',
-                e.value.toStringAsFixed(1),
-              );
-            }).toList(),
-          ),
+          subtitle: '1착 맞추기',
+          entries: odds.win.map((k, v) => MapEntry('$k번', v)),
         ),
-        const SizedBox(height: 16),
+      if (odds.place.isNotEmpty)
         _buildSection(
           context,
-          title: '복승',
-          subtitle: '1, 2등 순서 상관 없음',
-          child: Wrap(
-            alignment: WrapAlignment.start,
-            spacing: 8,
-            runSpacing: 8,
-            children: odds.place.entries.map((e) {
-              return _oddsChip(
-                context,
-                e.key,
-                e.value.toStringAsFixed(1),
-              );
-            }).toList(),
-          ),
+          title: '연승',
+          subtitle: '2착 안에 드는 선수 맞추기',
+          entries: odds.place.map((k, v) => MapEntry('$k번', v)),
         ),
-        const SizedBox(height: 16),
+      if (odds.exacta.isNotEmpty)
         _buildSection(
           context,
           title: '쌍승',
-          subtitle: '1, 2등 순서 맞추기',
-          child: Wrap(
-            alignment: WrapAlignment.start,
-            spacing: 8,
-            runSpacing: 8,
-            children: odds.quinella.entries.map((e) {
-              return _oddsChip(
-                context,
-                e.key,
-                e.value.toStringAsFixed(1),
-              );
-            }).toList(),
-          ),
+          subtitle: '1, 2착 순서까지 맞추기',
+          entries: odds.exacta,
         ),
-        const SizedBox(height: 16),
+      if (odds.quinella.isNotEmpty)
+        _buildSection(
+          context,
+          title: '복승',
+          subtitle: '1, 2착 순서 상관 없음',
+          entries: odds.quinella,
+        ),
+      if (odds.trio.isNotEmpty)
         _buildSection(
           context,
           title: '삼복승',
-          subtitle: '1, 2, 3등 순서 상관 없음',
-          child: Wrap(
-            alignment: WrapAlignment.start,
-            spacing: 8,
-            runSpacing: 8,
-            children: odds.trio.entries.map((e) {
-              return _oddsChip(
-                context,
-                e.key,
-                e.value.toStringAsFixed(1),
-              );
-            }).toList(),
-          ),
+          subtitle: '1, 2, 3착 순서 상관 없음',
+          entries: odds.trio,
         ),
-        const SizedBox(height: 16),
+      if (odds.exactaTrio.isNotEmpty)
+        _buildSection(
+          context,
+          title: '쌍복승',
+          subtitle: '1, 2착 순서 맞추고 3착 포함',
+          entries: odds.exactaTrio,
+        ),
+      if (odds.trifecta.isNotEmpty)
         _buildSection(
           context,
           title: '삼쌍승',
-          subtitle: '1, 2, 3등 순서 맞추기',
-          child: Wrap(
-            alignment: WrapAlignment.start,
-            spacing: 8,
-            runSpacing: 8,
-            children: odds.trifecta.entries.map((e) {
-              return _oddsChip(
-                context,
-                e.key,
-                e.value.toStringAsFixed(1),
-              );
-            }).toList(),
-          ),
+          subtitle: '1, 2, 3착 순서까지 맞추기',
+          entries: odds.trifecta,
         ),
+    ];
+
+    if (sections.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      children: [
+        for (var i = 0; i < sections.length; i++) ...[
+          if (i > 0) const SizedBox(height: 16),
+          sections[i],
+        ],
       ],
     );
   }
@@ -107,7 +76,7 @@ class OddsPanel extends StatelessWidget {
     BuildContext context, {
     required String title,
     String? subtitle,
-    required Widget child,
+    required Map<String, double> entries,
   }) {
     final theme = Theme.of(context);
     return Container(
@@ -141,7 +110,17 @@ class OddsPanel extends StatelessWidget {
             ),
           ],
           const SizedBox(height: 12),
-          Align(alignment: Alignment.centerLeft, child: child),
+          Align(
+            alignment: Alignment.centerLeft,
+            child: Wrap(
+              alignment: WrapAlignment.start,
+              spacing: 8,
+              runSpacing: 8,
+              children: entries.entries
+                  .map((e) => _oddsChip(context, e.key, e.value.toStringAsFixed(1)))
+                  .toList(),
+            ),
+          ),
         ],
       ),
     );

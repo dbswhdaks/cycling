@@ -88,6 +88,9 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
   static bool _isNotYetError(Object error) =>
       error.toString().contains('NOT_YET');
 
+  static bool _isNoDataError(Object error) =>
+      error.toString().contains('NO_DATA');
+
   @override
   void initState() {
     super.initState();
@@ -134,7 +137,6 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     final params = (venue: venueCode, date: date, raceNo: raceNo);
     ref.invalidate(raceResultProvider(params));
     ref.invalidate(raceRankProvider(params));
-    ref.invalidate(oddsProvider(params));
     Future.delayed(const Duration(seconds: 2), () {
       if (mounted) setState(() => _isRefreshing = false);
     });
@@ -147,7 +149,6 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     final rankAsync = ref.watch(raceRankProvider(params));
     final predictionAsync = ref.watch(predictionProvider(params));
     final entriesAsync = ref.watch(raceEntriesProvider(params));
-    final oddsAsync = ref.watch(oddsProvider(params));
     final raceListAsync =
         ref.watch(raceListProvider((venue: venueCode, date: date)));
 
@@ -188,20 +189,20 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
                           return Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
-                              _buildPodium(context, unified),
+                              _buildPodium(context, unified, ranks),
                               const SizedBox(height: 28),
                               _buildComparisonSection(
                                 context, unified, predictionAsync, entriesAsync,
                               ),
                               const SizedBox(height: 28),
-                              _buildOddsResult(context, unified, oddsAsync),
+                              _buildOddsResult(context, unified, ranks),
                               const SizedBox(height: 28),
                               _buildRankingList(context, ranks),
                             ],
                           );
                         },
                         loading: () => _buildLoadingBox(400),
-                        error: (_, __) => resultAsync.when(
+                        error: (rankError, __) => resultAsync.when(
                           data: (result) => Column(
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
@@ -211,13 +212,17 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
                                 context, result, predictionAsync, entriesAsync,
                               ),
                               const SizedBox(height: 28),
-                              _buildOddsResult(context, result, oddsAsync),
+                              _buildOddsResult(context, result),
                               const SizedBox(height: 28),
                               _buildRankingFromResult(context, result),
                             ],
                           ),
                           loading: () => _buildLoadingBox(200),
-                          error: (_, __) => _buildErrorBox(context, '결과를 불러올 수 없습니다'),
+                          error: (resultError, __) =>
+                              _isNoDataError(resultError) &&
+                                  _isNoDataError(rankError)
+                              ? _buildNoDataSection(context)
+                              : _buildErrorBox(context, '결과를 불러올 수 없습니다'),
                         ),
                       ),
                     const SizedBox(height: 24),
@@ -233,25 +238,39 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     );
   }
 
-  /// 전체 순위 데이터를 기준으로 RaceResult를 생성 (단일 데이터 소스)
-  RaceResult _unifiedResult(List<Map<String, dynamic>> ranks, RaceResult? fallback) {
-    if (ranks.length < 3) return fallback ?? RaceResult(raceNo: raceNo, first: '', firstNo: 0, second: '', secondNo: 0, third: '', thirdNo: 0);
+  /// 착순·배당이 한 레코드에서 오는 경주결과를 우선 사용하고,
+  /// 결과가 없을 때만 전체 순위 목록으로 1·2·3착을 구성한다.
+  RaceResult _unifiedResult(
+    List<Map<String, dynamic>> ranks,
+    RaceResult? apiResult,
+  ) {
+    if (apiResult != null && apiResult.hasPlacings) return apiResult;
 
-    final r1 = ranks[0];
-    final r2 = ranks[1];
-    final r3 = ranks[2];
+    const empty = RaceResult(
+      raceNo: 0,
+      first: '',
+      firstNo: 0,
+      second: '',
+      secondNo: 0,
+      third: '',
+      thirdNo: 0,
+    );
+    if (ranks.length < 3) return apiResult ?? empty;
+
+    int backNo(Map<String, dynamic> r) {
+      final v = r['back_no'];
+      return v is int ? v : int.tryParse(v?.toString() ?? '') ?? 0;
+    }
 
     return RaceResult(
       raceNo: raceNo,
-      first: r1['racer_nm']?.toString() ?? '',
-      firstNo: (r1['back_no'] is int) ? r1['back_no'] : int.tryParse(r1['back_no']?.toString() ?? '') ?? 0,
-      second: r2['racer_nm']?.toString() ?? '',
-      secondNo: (r2['back_no'] is int) ? r2['back_no'] : int.tryParse(r2['back_no']?.toString() ?? '') ?? 0,
-      third: r3['racer_nm']?.toString() ?? '',
-      thirdNo: (r3['back_no'] is int) ? r3['back_no'] : int.tryParse(r3['back_no']?.toString() ?? '') ?? 0,
-      winOdds: fallback?.winOdds ?? 0,
-      placeOdds: fallback?.placeOdds ?? 0,
-      quinellaOdds: fallback?.quinellaOdds ?? 0,
+      first: ranks[0]['racer_nm']?.toString() ?? '',
+      firstNo: backNo(ranks[0]),
+      second: ranks[1]['racer_nm']?.toString() ?? '',
+      secondNo: backNo(ranks[1]),
+      third: ranks[2]['racer_nm']?.toString() ?? '',
+      thirdNo: backNo(ranks[2]),
+      payoff: apiResult?.payoff ?? const Odds(),
     );
   }
 
@@ -496,20 +515,91 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     );
   }
 
+  Widget _buildNoDataSection(BuildContext context) {
+    final theme = Theme.of(context);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 48, horizontal: 24),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: 0.15),
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.search_off_rounded,
+            size: 40,
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.3),
+          ),
+          const SizedBox(height: 16),
+          Text(
+            '공개된 경주 결과가 없습니다',
+            style: theme.textTheme.titleMedium?.copyWith(
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '$displayDate $venueName ${raceNo}R은\n'
+            '공식 자료에서 결과를 찾을 수 없습니다.',
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+              height: 1.5,
+            ),
+          ),
+          const SizedBox(height: 24),
+          OutlinedButton.icon(
+            onPressed: _refreshData,
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('다시 확인'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: theme.colorScheme.onSurface.withValues(alpha: 0.7),
+              side: BorderSide(
+                color: theme.colorScheme.onSurface.withValues(alpha: 0.2),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   // ─── 포디움 (1·2·3위) ───
 
-  Widget _buildPodium(BuildContext context, RaceResult result) {
+  Widget _buildPodium(
+    BuildContext context,
+    RaceResult result, [
+    List<Map<String, dynamic>> ranks = const [],
+  ]) {
     final theme = Theme.of(context);
     const podiumColors = [Color(0xFFFBBF24), Color(0xFFA3A3A3), Color(0xFFCD7F32)];
 
+    // 동착이면 두 선수가 같은 순위이므로 착순표의 실제 순위를 우선한다.
+    final rankByBackNo = {
+      for (final r in ranks)
+        if (r['back_no'] is int && r['rank'] is int)
+          r['back_no'] as int: r['rank'] as int,
+    };
+    int actualRank(int backNo, int fallback) => rankByBackNo[backNo] ?? fallback;
+
     final riders = [
-      (name: result.first, no: result.firstNo, rank: 1),
-      (name: result.second, no: result.secondNo, rank: 2),
-      (name: result.third, no: result.thirdNo, rank: 3),
+      (name: result.first, no: result.firstNo, rank: actualRank(result.firstNo, 1)),
+      (name: result.second, no: result.secondNo, rank: actualRank(result.secondNo, 2)),
+      (name: result.third, no: result.thirdNo, rank: actualRank(result.thirdNo, 3)),
     ];
-    final heights = [100.0, 100.0, 100.0];
-    final colors = [podiumColors[0], podiumColors[1], podiumColors[2]];
-    final labels = ['1st', '2nd', '3rd'];
+    const heights = [100.0, 100.0, 100.0];
+    final colors = [
+      for (final r in riders) podiumColors[(r.rank - 1).clamp(0, 2)],
+    ];
+    final labels = [for (final r in riders) _ordinalLabel(r.rank)];
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -616,53 +706,104 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
 
   // ─── 확정 배당 ───
 
-  Widget _buildOddsResult(BuildContext context, RaceResult result, AsyncValue<Odds> oddsAsync) {
+  /// 확정 배당을 승식별로 나열한다.
+  ///
+  /// 동착 경주는 한 승식에 적중 조합이 둘 이상 나오므로 착순 조합 하나만
+  /// 골라 쓰지 않고 API가 확정한 조합을 모두 보여준다.
+  Widget _buildOddsResult(
+    BuildContext context,
+    RaceResult result, [
+    List<Map<String, dynamic>> ranks = const [],
+  ]) {
     final theme = Theme.of(context);
     final isDark = theme.brightness == Brightness.dark;
-    final odds = oddsAsync.valueOrNull;
+    final payoff = result.payoff;
 
-    final f = result.firstNo;
-    final s = result.secondNo;
-    final t = result.thirdNo;
+    final nameByNo = <int, String>{
+      for (final r in ranks)
+        if (r['back_no'] is int) r['back_no'] as int: r['racer_nm']?.toString() ?? '',
+      if (result.firstNo > 0) result.firstNo: result.first,
+      if (result.secondNo > 0) result.secondNo: result.second,
+      if (result.thirdNo > 0) result.thirdNo: result.third,
+    };
 
-    final fName = result.first.isNotEmpty ? result.first : '';
-    final sName = result.second.isNotEmpty ? result.second : '';
-    final tName = result.third.isNotEmpty ? result.third : '';
+    String amount(double odds) => '${odds.toStringAsFixed(1)}배';
+    List<int> numbers(String key) =>
+        key.split('-').map((n) => int.tryParse(n) ?? 0).toList();
+    String names(String key, String separator) => numbers(key)
+        .map((no) => nameByNo[no] ?? '')
+        .where((n) => n.isNotEmpty)
+        .join(separator);
 
-    String num(int no) => no > 0 ? '$no' : '?';
+    final items = <({String type, String combo, String detail, String value, Color color})>[];
 
-    // 단승
-    final winOdds = result.winOdds > 0 ? result.winOdds : odds?.win[f];
+    for (final entry in payoff.win.entries) {
+      items.add((
+        type: '단승',
+        combo: '${entry.key}번 ${nameByNo[entry.key] ?? ''}'.trim(),
+        detail: '1착 맞추기',
+        value: amount(entry.value),
+        color: const Color(0xFFEF4444),
+      ));
+    }
 
-    // 복승
-    final placeOdds = result.placeOdds > 0
-        ? result.placeOdds
-        : (odds?.place['$f-$s'] ?? odds?.place['$s-$f']);
+    if (payoff.place.isNotEmpty) {
+      items.add((
+        type: '연승',
+        combo: payoff.place.keys.map((no) => '$no번').join(' · '),
+        detail: '2착 안에 드는 선수 각각',
+        value: '${payoff.place.values.map((o) => o.toStringAsFixed(1)).join(' / ')}배',
+        color: const Color(0xFF14B8A6),
+      ));
+    }
 
-    // 쌍승
-    final quinOdds = result.quinellaOdds > 0
-        ? result.quinellaOdds
-        : (odds?.quinella['$f-$s'] ?? odds?.quinella['$s-$f']);
-
-    // 삼복승
-    double? trioOdds;
-    if (odds != null) {
-      final trioKeys = ['$f-$s-$t', '$f-$t-$s', '$s-$f-$t', '$s-$t-$f', '$t-$f-$s', '$t-$s-$f'];
-      for (final k in trioKeys) {
-        if (odds.trio.containsKey(k)) { trioOdds = odds.trio[k]; break; }
+    void addCombos(
+      String type,
+      Map<String, double> pool, {
+      required String Function(List<int> nos) format,
+      required String detail,
+      String? nameSeparator,
+      required Color color,
+    }) {
+      for (final entry in pool.entries) {
+        final riders = nameSeparator == null ? '' : names(entry.key, nameSeparator);
+        items.add((
+          type: type,
+          combo: format(numbers(entry.key)),
+          detail: riders.isEmpty ? detail : '$detail $riders',
+          value: amount(entry.value),
+          color: color,
+        ));
       }
     }
 
-    // 삼쌍승
-    final triOdds = odds?.trifecta['$f-$s-$t'];
+    addCombos('쌍승', payoff.exacta,
+        format: (nos) => nos.join('→'),
+        detail: '1·2착',
+        nameSeparator: '→',
+        color: const Color(0xFF8B5CF6));
+    addCombos('복승', payoff.quinella,
+        format: (nos) => nos.join('·'),
+        detail: '1·2착',
+        nameSeparator: '·',
+        color: const Color(0xFF3B82F6));
+    addCombos('삼복승', payoff.trio,
+        format: (nos) => nos.join('·'),
+        detail: '1·2·3착 순서 무관',
+        color: const Color(0xFFF59E0B));
+    addCombos('쌍복승', payoff.exactaTrio,
+        format: (nos) => nos.length == 3
+            ? '${nos[0]}→${nos[1]}·${nos[2]}'
+            : nos.join('·'),
+        detail: '1·2착 순서 맞추고 3착 포함',
+        color: const Color(0xFF22C55E));
+    addCombos('삼쌍승', payoff.trifecta,
+        format: (nos) => nos.join('→'),
+        detail: '1·2·3착',
+        nameSeparator: '→',
+        color: const Color(0xFFEC4899));
 
-    final items = <({String type, String combo, String detail, double? odds, Color color})>[
-      (type: '단승', combo: '${num(f)}번 $fName', detail: '1착 맞추기', odds: winOdds, color: const Color(0xFFEF4444)),
-      (type: '복승', combo: '${num(f)}-${num(s)}', detail: '1·2착 ${fName.isNotEmpty && sName.isNotEmpty ? "$fName·$sName" : "순서 무관"}', odds: placeOdds, color: const Color(0xFF3B82F6)),
-      (type: '쌍승', combo: '${num(f)}→${num(s)}', detail: '1·2착 ${fName.isNotEmpty && sName.isNotEmpty ? "$fName→$sName" : "순서 맞추기"}', odds: quinOdds, color: const Color(0xFF8B5CF6)),
-      (type: '삼복승', combo: '${num(f)}-${num(s)}-${num(t)}', detail: '1·2·3착 ${[fName, sName, tName].where((n) => n.isNotEmpty).join("·")}', odds: trioOdds, color: const Color(0xFFF59E0B)),
-      (type: '삼쌍승', combo: '${num(f)}→${num(s)}→${num(t)}', detail: '1·2·3착 ${[fName, sName, tName].where((n) => n.isNotEmpty).join("→")}', odds: triOdds, color: const Color(0xFFEC4899)),
-    ];
+    if (items.isEmpty) return const SizedBox.shrink();
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
@@ -724,9 +865,11 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
                 ),
               ),
               Text(
-                item.odds != null ? '${item.odds!.toStringAsFixed(1)}배' : '-',
+                item.value,
                 style: TextStyle(
-                  color: item.odds != null ? item.color : theme.colorScheme.onSurface.withValues(alpha: 0.3),
+                  color: item.value == '-'
+                      ? theme.colorScheme.onSurface.withValues(alpha: 0.3)
+                      : item.color,
                   fontSize: 20,
                   fontWeight: FontWeight.w800,
                 ),
@@ -789,27 +932,27 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
       child: Row(
         children: [
           SizedBox(
-            width: 36,
+            width: 32,
             child: Text('순위', style: _headerStyle(theme)),
           ),
           SizedBox(
-            width: 30,
+            width: 26,
             child: Text('번호', style: _headerStyle(theme)),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Expanded(child: Text('선수', style: _headerStyle(theme))),
           SizedBox(
-            width: 40,
+            width: 42,
             child: Text('등급', style: _headerStyle(theme), textAlign: TextAlign.center),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           SizedBox(
-            width: 60,
+            width: 72,
             child: Text('기록', style: _headerStyle(theme), textAlign: TextAlign.right),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           SizedBox(
-            width: 48,
+            width: 44,
             child: Text('착차', style: _headerStyle(theme), textAlign: TextAlign.right),
           ),
         ],
@@ -853,7 +996,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
       child: Row(
         children: [
           SizedBox(
-            width: 36,
+            width: 32,
             child: isTop3
                 ? Container(
                     width: 26,
@@ -882,60 +1025,74 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
                   ),
           ),
           SizedBox(
-            width: 30,
+            width: 26,
             child: Text(
               '$backNo',
               style: theme.textTheme.bodyMedium?.copyWith(fontWeight: FontWeight.w700),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           Expanded(
             child: Text(
               name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodyMedium?.copyWith(
                 fontWeight: isTop3 ? FontWeight.w600 : FontWeight.w400,
               ),
             ),
           ),
           SizedBox(
-            width: 40,
+            width: 42,
             child: Center(
-              child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-                decoration: BoxDecoration(
-                  color: _gradeColor(grade).withValues(alpha: 0.15),
-                  borderRadius: BorderRadius.circular(4),
-                ),
-                child: Text(
-                  grade,
-                  style: TextStyle(
-                    color: _gradeColor(grade),
-                    fontSize: 10,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ),
+              child: grade.isEmpty
+                  ? const SizedBox.shrink()
+                  : Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: _gradeColor(grade).withValues(alpha: 0.15),
+                        borderRadius: BorderRadius.circular(4),
+                      ),
+                      child: Text(
+                        grade,
+                        maxLines: 1,
+                        softWrap: false,
+                        style: TextStyle(
+                          color: _gradeColor(grade),
+                          fontSize: 10,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           SizedBox(
-            width: 60,
+            width: 72,
             child: Text(
               time,
               textAlign: TextAlign.right,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 11,
                 fontWeight: FontWeight.w500,
                 fontFamily: 'monospace',
               ),
             ),
           ),
-          const SizedBox(width: 8),
+          const SizedBox(width: 6),
           SizedBox(
-            width: 48,
+            width: 44,
             child: Text(
               diff,
               textAlign: TextAlign.right,
+              maxLines: 1,
+              softWrap: false,
+              overflow: TextOverflow.ellipsis,
               style: theme.textTheme.bodySmall?.copyWith(
+                fontSize: 11,
                 color: rankNum == 1 ? const Color(0xFFFBBF24) : theme.colorScheme.onSurface.withValues(alpha: 0.5),
                 fontWeight: FontWeight.w500,
               ),
@@ -1416,7 +1573,8 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '경주 결과는 공공데이터 API 기준이며, 확정 배당은 실제와 차이가 있을 수 있습니다.',
+              '착순과 확정 배당은 공공데이터포털(국민체육진흥공단) 경주결과 API의 동일 자료 기준이며, '
+              '주행시간·착차는 경륜 공식 사이트(KCYCLE) 경주결과에서 가져옵니다.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: const Color(0xFF3B82F6).withValues(alpha: 0.8),
                 height: 1.4,
@@ -1461,6 +1619,13 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     );
   }
 
+  String _ordinalLabel(int rank) => switch (rank) {
+    1 => '1st',
+    2 => '2nd',
+    3 => '3rd',
+    _ => '${rank}th',
+  };
+
   Color _gradeColor(String grade) {
     return switch (grade) {
       'S' => const Color(0xFFE53935),
@@ -1469,7 +1634,10 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
       'B1' => const Color(0xFF43A047),
       'B2' => const Color(0xFF1E88E5),
       'B3' => const Color(0xFF8E24AA),
-      _ => const Color(0xFF757575),
+      '특선' || '특선급' || '우결' => const Color(0xFFE53935),
+      '우수' || '우수급' || '선결' => const Color(0xFFF57C00),
+      '선발' || '선발급' || '일반' => const Color(0xFF43A047),
+      _ => const Color(0xFF9E9E9E),
     };
   }
 }

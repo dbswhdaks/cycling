@@ -175,9 +175,13 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           const SizedBox(height: 12),
           entriesAsync.when(
             data: (result) {
-              final entries = result is DataWithSource ? result.data : result;
+              final entries = (result is DataWithSource ? result.data : result)
+                  as List;
+              if (entries.isEmpty) {
+                return _buildEmptyNotice(theme, '출주표가 아직 공개되지 않았습니다.');
+              }
               return Column(
-                children: (entries as List)
+                children: entries
                     .cast<RaceEntry>()
                     .map(
                       (e) => Padding(
@@ -192,10 +196,12 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
             error: (_, __) => _buildErrorCard(context),
           ),
           const SizedBox(height: 28),
-          _buildSectionTitle(theme, '배당률'),
+          _buildSectionTitle(theme, '확정 배당'),
           const SizedBox(height: 12),
           oddsAsync.when(
-            data: (odds) => OddsPanel(odds: odds),
+            data: (odds) => (odds as Odds).isEmpty
+                ? _buildEmptyNotice(theme, '경주 종료 후 확정 배당이 표시됩니다.')
+                : OddsPanel(odds: odds),
             loading: () => _buildLoadingOdds(),
             error: (_, __) => const SizedBox.shrink(),
           ),
@@ -204,7 +210,10 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
             context,
             icon: Icons.info_outline_rounded,
             title: '경주 정보',
-            items: ['거리: 2025m', '출전: 7명', '배당은 실시간 변동됩니다', '공공데이터 API 연동'],
+            items: [
+              '출주표: 공공데이터 API·경륜 공식 사이트',
+              '확정 배당: 경주 종료 후 공개',
+            ],
           ),
           const SizedBox(height: 18),
           Center(child: _buildResultActionButton(context)),
@@ -223,8 +232,9 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
   ) {
     return oddsAsync.when(
       data: (odds) {
+        // 확정 배당은 1착 선수만 담고 있어 인기 순위를 만들 수 없다.
         final winOdds = (odds as Odds).win;
-        if (winOdds.isEmpty) return const SizedBox.shrink();
+        if (winOdds.length < 3) return const SizedBox.shrink();
 
         final sorted = winOdds.entries.toList()
           ..sort((a, b) => a.value.compareTo(b.value));
@@ -1131,6 +1141,37 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
     );
   }
 
+  Widget _buildEmptyNotice(ThemeData theme, String message) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 28, horizontal: 20),
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surfaceContainerHighest.withValues(alpha: 0.3),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: theme.colorScheme.outline.withValues(alpha: 0.15),
+        ),
+      ),
+      child: Column(
+        children: [
+          Icon(
+            Icons.inbox_rounded,
+            size: 30,
+            color: theme.colorScheme.onSurface.withValues(alpha: 0.3),
+          ),
+          const SizedBox(height: 10),
+          Text(
+            message,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: theme.colorScheme.onSurface.withValues(alpha: 0.6),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildErrorCard(BuildContext context) {
     return Container(
       padding: const EdgeInsets.all(20),
@@ -1149,7 +1190,7 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           const SizedBox(width: 12),
           Expanded(
             child: Text(
-              '출주표를 불러올 수 없습니다. 목업 데이터를 표시합니다.',
+              '출주표를 불러올 수 없습니다. 잠시 후 다시 시도해 주세요.',
               style: Theme.of(context).textTheme.bodyMedium,
             ),
           ),

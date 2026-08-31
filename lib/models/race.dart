@@ -10,6 +10,9 @@ class Race {
   final int racerCount;
   final int roundCount;
 
+  /// 경주 등급 (특선·우수·선발 등). 확인되지 않으면 빈 문자열.
+  final String grade;
+
   const Race({
     required this.venueCode,
     required this.date,
@@ -20,6 +23,7 @@ class Race {
     this.departureTime,
     this.racerCount = 0,
     this.roundCount = 0,
+    this.grade = '',
   }) : _rawStatus = status;
 
   /// 확정/종료/완료 등 명시적 상태가 있으면 그대로 사용하고,

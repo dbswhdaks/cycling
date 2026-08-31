@@ -190,9 +190,9 @@ class _RaceCardState extends State<RaceCard> {
             children: [
               Row(
                 children: [
-                  const Text(
-                    '일반',
-                    style: TextStyle(
+                  Text(
+                    race.grade.isNotEmpty ? race.grade : '일반',
+                    style: const TextStyle(
                       color: Colors.white,
                       fontSize: 15,
                       fontWeight: FontWeight.w700,

@@ -78,5 +78,10 @@ class ApiConstants {
   /// meet 파라미터 매핑 (경기장 코드 → API meet 값)
   static const Map<int, int> meetCodes = {1: 1, 2: 2, 3: 3};
 
+  /// 경주결과·경주순위 API가 사용하는 경기장 명칭 (`meet_nm` 파라미터)
+  static const Map<int, String> venueApiNames = {1: '광명', 2: '창원', 3: '부산'};
+
   static String venueName(int code) => venueCodes[code] ?? '알 수 없음';
+
+  static String venueApiName(int code) => venueApiNames[code] ?? '광명';
 }

@@ -82,7 +82,7 @@ class VenueScrapingService {
         if (response.statusCode != 200) return null;
         final html = response.data.toString();
         if (html.length < 500) return null;
-        return _parseLepoparkHtml(html, date);
+        return parseLepoparkHtml(html, date);
       } catch (e) {
         if (kDebugMode) debugPrint('[Scrape] lepopark $pathType: $e');
         return null;
@@ -105,7 +105,8 @@ class VenueScrapingService {
   /// - 섹션 헤더: "창원 06 경주 [우수] 출발 10:35"
   /// - 선수 링크: <a href="/racer/ID">선수명</a>
   /// - 하단 요약 테이블: 기어배수, 200m기록, 훈련지, 등급, 평균득점 등
-  Map<int, List<Map<String, dynamic>>> _parseLepoparkHtml(String htmlString, String date) {
+  @visibleForTesting
+  Map<int, List<Map<String, dynamic>>> parseLepoparkHtml(String htmlString, String date) {
     final result = <int, List<Map<String, dynamic>>>{2: [], 3: []};
     final dateFormatted = _toDateDot(date);
 
@@ -193,6 +194,7 @@ class VenueScrapingService {
           'racer_nm': name,
           'racer_grd_cd': scoreData['grade'] ?? grade,
           'racer_grd_cur_cd': scoreData['grade'] ?? grade,
+          'race_grd': grade,
           'race_len': (distance ?? 0).toString(),
           'dptre_tm': deptTime,
           'round_cnt': (roundCount ?? 0).toString(),
@@ -346,6 +348,7 @@ class VenueScrapingService {
           'racer_grd_cd': parsed['grade'] ?? '',
           'racer_grd_cur_cd': parsed['grade'] ?? '',
           'racer_grd_pre_cd': parsed['prevGrade'] ?? '',
+          'race_grd': grade,
           'race_len': (distance ?? 0).toString(),
           'dptre_tm': deptTime ?? '',
           'round_cnt': (roundCount ?? 0).toString(),
