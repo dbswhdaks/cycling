@@ -33,7 +33,7 @@ case $selection in
 
     5)
     echo "기존 앱 삭제 후 디버그 설치"
-    adb uninstall com.happy.kdrive
+    adb uninstall com.gyeongryunplus.app
     flutter install
     ;;
 
