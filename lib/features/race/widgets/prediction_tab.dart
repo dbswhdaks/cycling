@@ -253,8 +253,10 @@ class PredictionTab extends StatelessWidget {
                     ),
                     const SizedBox(width: 6),
                     _chip(r.grade, _gradeColor(r.grade)),
-                    const SizedBox(width: 4),
-                    _chip(r.tactic, const Color(0xFF6366F1)),
+                    if (r.tactic.trim().isNotEmpty) ...[
+                      const SizedBox(width: 4),
+                      _chip(r.tactic, const Color(0xFF6366F1)),
+                    ],
                   ],
                 ),
                 const SizedBox(height: 6),

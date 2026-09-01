@@ -114,12 +114,14 @@ class EntryCard extends ConsumerWidget {
                 Row(
                   children: [
                     _buildChip(context, entry.grade, gradeColor),
-                    const SizedBox(width: 6),
-                    _buildChip(
-                      context,
-                      entry.tactic,
-                      theme.colorScheme.primary.withValues(alpha: 0.8),
-                    ),
+                    if (entry.tactic.trim().isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      _buildChip(
+                        context,
+                        entry.tactic,
+                        theme.colorScheme.primary.withValues(alpha: 0.8),
+                      ),
+                    ],
                   ],
                 ),
               ],

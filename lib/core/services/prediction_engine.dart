@@ -274,19 +274,29 @@ class PredictionEngine {
     return [
       BettingPick(
         label: '${top.lineNo}번 ${top.riderName}',
-        description:
-            '${top.grade} · ${_tacticLabels[top.tactic] ?? top.tactic} · 승률 ${top.winProb.toStringAsFixed(1)}%',
+        description: _describe([
+          top.grade,
+          _tacticLabels[top.tactic] ?? top.tactic,
+          '승률 ${top.winProb.toStringAsFixed(1)}%',
+        ]),
         confidence: top.winProb,
       ),
       if (rankings.length > 1)
         BettingPick(
           label: '${rankings[1].lineNo}번 ${rankings[1].riderName}',
-          description:
-              '대항마 · ${rankings[1].grade} · 승률 ${rankings[1].winProb.toStringAsFixed(1)}%',
+          description: _describe([
+            '대항마',
+            rankings[1].grade,
+            '승률 ${rankings[1].winProb.toStringAsFixed(1)}%',
+          ]),
           confidence: rankings[1].winProb,
         ),
     ];
   }
+
+  /// 비어 있는 항목은 빼고 가운뎃점으로 잇는다.
+  static String _describe(List<String> parts) =>
+      parts.where((p) => p.trim().isNotEmpty).join(' · ');
 
   static List<BettingPick> _placePicks(
     List<RiderPrediction> rankings,
