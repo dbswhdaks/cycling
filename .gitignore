@@ -52,3 +52,6 @@ app.*.map.json
 .env
 .env.local
 .env.*.local
+
+# 백테스트 원본 데이터 (스크립트로 다시 내려받을 수 있음)
+/tool/backtest/data/

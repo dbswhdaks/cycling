@@ -169,8 +169,8 @@ class VenueScrapingService {
           .where((m) => m.start >= hdrEnd && m.start < nextHdrStart)
           .toList();
 
-      // 등급·평균득점 테이블 파싱
-      final gradeScores = _extractLepoparkTableData(sectionHtml, venue);
+      // 배번별 상세 지표 테이블 파싱
+      final stats = _parseLepoparkRiderStats(sectionHtml);
 
       // 선수별 데이터 생성
       // 선수 링크가 중복 출현할 수 있으므로 첫 번째 출현만 사용
@@ -183,28 +183,37 @@ class VenueScrapingService {
         seenNames.add(name);
         backNo++;
 
-        final scoreData = (backNo - 1 < gradeScores.length)
-            ? gradeScores[backNo - 1]
-            : <String, String>{};
+        final rider = stats[backNo] ?? const <String, String>{};
 
         result[meetCode]!.add({
           'race_ymd': dateFormatted,
           'race_no': raceNo.toString(),
           'back_no': backNo.toString(),
           'racer_nm': name,
-          'racer_grd_cd': scoreData['grade'] ?? grade,
-          'racer_grd_cur_cd': scoreData['grade'] ?? grade,
+          'racer_grd_cd': rider['grade'] ?? grade,
+          'racer_grd_cur_cd': rider['grade'] ?? grade,
           'race_grd': grade,
           'race_len': (distance ?? 0).toString(),
           'dptre_tm': deptTime,
           'round_cnt': (roundCount ?? 0).toString(),
-          'tot_tms_avg_scr': scoreData['avgScore'] ?? '0',
-          'win_tot_tcnt': '0',
-          'brk_win_cnt': scoreData['brkWin'] ?? '0',
-          'mrk_win_cnt': scoreData['mrkWin'] ?? '0',
-          'pre_win_cnt': '0',
           'meet': meetCode.toString(),
           'data_source': 'scrape_lepopark',
+          // 공공 API와 같은 키를 쓰므로 출주표 파싱을 그대로 재사용할 수 있다.
+          'tot_tms_avg_scr': rider['totalAvgScore'] ?? '0',
+          'area_tms3_avg_scr': rider['areaAvgScore'] ?? '0',
+          'win_rate': rider['winRate'] ?? '0',
+          'rec_200m_scr': rider['sprint'] ?? '',
+          'racer_age': rider['age'] ?? '',
+          'trng_plc_nm': rider['trainingPlace'] ?? '',
+          'gear_rate': rider['gear'] ?? '',
+          'run_day_tcnt': rider['runDays'] ?? '0',
+          'pre_win_cnt': rider['preWin'] ?? '0',
+          'brk_win_cnt': rider['brkWin'] ?? '0',
+          'pas_win_cnt': rider['pasWin'] ?? '0',
+          'mrk_win_cnt': rider['mrkWin'] ?? '0',
+          for (final entry in rider.entries)
+            if (entry.key.startsWith('bf') || entry.key.startsWith('cur_'))
+              entry.key: entry.value,
         });
       }
     }
@@ -212,50 +221,88 @@ class VenueScrapingService {
     return result;
   }
 
-  /// lepopark 섹션 내 요약 테이블에서 등급·평균득점 추출.
+  /// lepopark 경주 섹션에서 배번별 예측 지표를 추출한다.
   ///
-  /// 테이블 행 구조 (열):
-  ///   기어배수 | 200m기록 | 훈련지 | ... | 현재등급 | 이전등급 | 로컬평균 | 종합평균 | 순위
-  List<Map<String, String>> _extractLepoparkTableData(String sectionHtml, String venue) {
-    final results = <Map<String, String>>[];
+  /// 섹션에는 표가 여러 개 있고 그중 두 개를 쓴다.
+  ///
+  /// 출주 지표표(17열)
+  ///   번호선수명(기수/나이) · 기어배수 · 200m기록 · 훈련지 · 승률 · 연대율 ·
+  ///   삼연대율 · 입상/출전일수 · 선행 · 젖히기 · 추입 · 마크 ·
+  ///   현재등급 · 이전등급 · 해당 경기장 최근3회 평균득점 · 종합 평균득점 · 종합순위
+  ///
+  /// 최근 성적표(18열)
+  ///   선수명 · (최근 3·2·1회전 각각 장소·날짜·1~3일차) · 금회 1·2일차
+  Map<int, Map<String, String>> _parseLepoparkRiderStats(String sectionHtml) {
+    final stats = <int, Map<String, String>>{};
+    final fragment = html_parser.parseFragment(sectionHtml);
 
-    final miniDoc = html_parser.parseFragment(sectionHtml);
-    final tables = miniDoc.querySelectorAll('table');
+    for (final table in fragment.querySelectorAll('table')) {
+      final header = table.text;
+      final isStatTable = header.contains('기어배수') && header.contains('훈련지');
+      final isRecentTable = header.contains('최근 1회전 성적');
+      if (!isStatTable && !isRecentTable) continue;
 
-    for (final table in tables) {
-      final rows = table.querySelectorAll('tr');
-      for (final row in rows) {
-        final cells = row.querySelectorAll('td');
-        if (cells.length < 6) continue;
+      for (final row in table.querySelectorAll('tr')) {
+        final cells = [
+          for (final cell in row.querySelectorAll('td')) _clean(cell.text),
+        ];
+        if (cells.isEmpty) continue;
 
-        // 등급 패턴 (S1~S3, A1~A3, B1~B3 등)
-        final gradeRegex = RegExp(r'^[SA-Z]\d$');
-        String? currentGrade;
-        String? avgScore;
+        final backNo = int.tryParse(
+          RegExp(r'^(\d+)').firstMatch(cells.first)?.group(1) ?? '',
+        );
+        if (backNo == null) continue;
 
-        for (int c = 0; c < cells.length; c++) {
-          final text = cells[c].text.trim();
-          if (gradeRegex.hasMatch(text) && currentGrade == null) {
-            currentGrade = text;
-          }
-          // 평균득점은 소수점을 가진 숫자 (80~100 범위)
-          final numVal = double.tryParse(text);
-          if (numVal != null && numVal >= 60 && numVal <= 120 && text.contains('.')) {
-            avgScore ??= text;
-          }
-        }
-
-        if (currentGrade != null || avgScore != null) {
-          results.add({
-            'grade': currentGrade ?? '',
-            'avgScore': avgScore ?? '0',
-          });
+        final target = stats.putIfAbsent(backNo, () => <String, String>{});
+        if (isStatTable && cells.length >= 17) {
+          _fillStatCells(target, cells);
+        } else if (isRecentTable && cells.length >= 18) {
+          _fillRecentCells(target, cells);
         }
       }
     }
 
-    return results;
+    return stats;
   }
+
+  void _fillStatCells(Map<String, String> target, List<String> cells) {
+    // "1송정욱28기26세" → 기수 28, 나이 26
+    final age = RegExp(r'(\d+)\s*세').firstMatch(cells[0])?.group(1);
+    // "26/40" → 입상 26일 / 출전 40일
+    final runDays = RegExp(r'/\s*(\d+)').firstMatch(cells[7])?.group(1);
+
+    target.addAll({
+      'gear': cells[1],
+      // 사이트는 `11”07`처럼 굽은 따옴표를 쓴다. 공공 API 표기로 맞춘다.
+      'sprint': cells[2].replaceAll('”', '"').replaceAll('“', '"'),
+      'trainingPlace': cells[3],
+      'winRate': cells[4],
+      'preWin': cells[8],
+      'brkWin': cells[9],
+      'pasWin': cells[10],
+      'mrkWin': cells[11],
+      'grade': cells[12],
+      'areaAvgScore': cells[14],
+      'totalAvgScore': cells[15],
+      if (age != null) 'age': age,
+      if (runDays != null) 'runDays': runDays,
+    });
+  }
+
+  void _fillRecentCells(Map<String, String> target, List<String> cells) {
+    // 최근 3회전(1~5) · 2회전(6~10) · 1회전(11~15) · 금회(16~17)
+    const rounds = {3: 2, 2: 7, 1: 12};
+    for (final entry in rounds.entries) {
+      for (var day = 1; day <= 3; day++) {
+        target['bf${entry.key}_day${day}_rank'] = cells[entry.value + day];
+      }
+    }
+    target['cur_day1_rank'] = cells[16];
+    target['cur_day2_rank'] = cells[17];
+  }
+
+  String _clean(String raw) =>
+      raw.replaceAll('\u00a0', ' ').replaceAll(RegExp(r'\s+'), ' ').trim();
 
   // ═══════════════════════════ spo1.or.kr (부산경륜) ═══════════════════════════
 

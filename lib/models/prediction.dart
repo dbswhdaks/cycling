@@ -6,6 +6,9 @@ class RiderPrediction {
   final String grade;
   final String tactic;
   final double winProb;
+
+  /// 3착 이내에 들 확률(%).
+  final double placeProb;
   final int rank;
   final double totalScore;
   final Map<String, double> factors;
@@ -20,6 +23,7 @@ class RiderPrediction {
     required this.rank,
     required this.totalScore,
     required this.factors,
+    this.placeProb = 0,
   });
 }
 

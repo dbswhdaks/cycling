@@ -71,6 +71,52 @@ void main() {
       expect(race3.first['dptre_tm'], '11:46');
       expect(race3.every((m) => (m['racer_grd_cd'] as String).isNotEmpty), isTrue);
     });
+
+    test('예측에 쓰는 지표까지 채운다', () {
+      final parsed = VenueScrapingService()
+          .parseLepoparkHtml(_fixture('lepopark_entrant.html'), '20260830');
+
+      final song = parsed[2]!.firstWhere((m) => m['racer_nm'] == '송정욱');
+
+      expect(song['racer_grd_cur_cd'], 'A2');
+      expect(song['tot_tms_avg_scr'], '91.64');
+      expect(song['area_tms3_avg_scr'], '93.91');
+      expect(song['win_rate'], '35');
+      expect(song['gear_rate'], '3.93');
+      expect(song['rec_200m_scr'], '11"07');
+      expect(song['trng_plc_nm'], '동서울');
+      expect(song['racer_age'], '26');
+      expect(song['run_day_tcnt'], '40');
+      expect(song['pre_win_cnt'], '6');
+      expect(song['mrk_win_cnt'], '3');
+      // 직전 회차와 이번 회차의 지난 일차 성적이 모두 담긴다.
+      expect(song['bf3_day1_rank'], '우수10-1젖');
+      expect(song['bf1_day3_rank'], '우수 5-6');
+      expect(song['cur_day1_rank'], '우수 2-3선');
+    });
+
+    test('크롤링 자료도 출주표 파싱에서 예측 항목으로 이어진다', () {
+      final parsed = VenueScrapingService()
+          .parseLepoparkHtml(_fixture('lepopark_entrant.html'), '20260830');
+      final race3 =
+          parsed[2]!.where((m) => m['race_no'] == '3').toList();
+
+      final entries = CyclingApiService().buildEntriesFromItems(race3);
+      final song = entries.firstWhere((e) => e.riderName == '송정욱');
+
+      expect(song.avgScore, 91.64);
+      expect(song.areaAvgScore, 93.91);
+      expect(song.winRate, 35);
+      expect(song.riderGrade, 'A2');
+      expect(song.sprint200m, 11.07);
+      expect(song.age, 26);
+      expect(song.trainingPlace, '동서울');
+      expect(song.markWinRatio, closeTo(3 / 40, 1e-9));
+      expect(song.tactic, '젖히기');
+      // 최신 성적(이번 회차 2일차)부터 담긴다.
+      expect(song.recentFinishes.first, 4);
+      expect(song.recentFinishes.length, greaterThanOrEqualTo(9));
+    });
   });
 
   group('크롤링 결과 편성 검증', () {

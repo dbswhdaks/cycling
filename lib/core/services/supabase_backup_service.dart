@@ -116,6 +116,15 @@ class SupabaseBackupService {
                 'tactic': e.tactic,
                 'avg_score': e.avgScore,
                 'recent3_wins': e.recent3Wins,
+                'rider_grade': e.riderGrade,
+                'area_avg_score': e.areaAvgScore,
+                'win_rate': e.winRate,
+                'recent_finishes': e.recentFinishes,
+                'recent_classes': e.recentClasses,
+                'sprint_200m': e.sprint200m,
+                'age': e.age,
+                'training_place': e.trainingPlace,
+                'mark_win_ratio': e.markWinRatio,
               })
           .toList();
       await _client
@@ -150,6 +159,15 @@ class SupabaseBackupService {
           tactic: (row['tactic'] as String?) ?? '선행',
           avgScore: (row['avg_score'] as num?)?.toDouble() ?? 0,
           recent3Wins: (row['recent3_wins'] as int?) ?? 0,
+          riderGrade: (row['rider_grade'] as String?) ?? '',
+          areaAvgScore: (row['area_avg_score'] as num?)?.toDouble() ?? 0,
+          winRate: (row['win_rate'] as num?)?.toDouble() ?? 0,
+          recentFinishes: _intList(row['recent_finishes']),
+          recentClasses: _doubleList(row['recent_classes']),
+          sprint200m: (row['sprint_200m'] as num?)?.toDouble() ?? 0,
+          age: (row['age'] as int?) ?? 0,
+          trainingPlace: (row['training_place'] as String?) ?? '',
+          markWinRatio: (row['mark_win_ratio'] as num?)?.toDouble() ?? 0,
         );
       }).toList();
     } catch (e) {
@@ -157,6 +175,15 @@ class SupabaseBackupService {
       return [];
     }
   }
+
+  /// jsonb 배열 컬럼을 안전하게 변환한다. 예전 행에는 값이 없다.
+  static List<int> _intList(Object? value) => value is List
+      ? [for (final v in value) if (v is num) v.toInt()]
+      : const [];
+
+  static List<double> _doubleList(Object? value) => value is List
+      ? [for (final v in value) if (v is num) v.toDouble()]
+      : const [];
 
   // ─── AI 예측 ───
 
@@ -174,7 +201,7 @@ class SupabaseBackupService {
         'rider_no': r.lineNo,
         'rider_name': r.riderName,
         'win_probability': r.winProb,
-        'place_probability': r.totalScore,
+        'place_probability': r.placeProb,
         'rank': r.rank,
         'total_score': r.totalScore,
         'factors': r.factors,
@@ -213,6 +240,7 @@ class SupabaseBackupService {
         grade: '',
         tactic: '',
         winProb: (r['win_probability'] as num?)?.toDouble() ?? 0,
+        placeProb: (r['place_probability'] as num?)?.toDouble() ?? 0,
         rank: (r['rank'] as int?) ?? 0,
         totalScore: (r['total_score'] as num?)?.toDouble() ?? 0,
         factors: r['factors'] != null

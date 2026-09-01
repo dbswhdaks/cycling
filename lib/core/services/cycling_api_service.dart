@@ -508,7 +508,7 @@ class CyclingApiService {
       }).toList();
 
       if (matched.isNotEmpty) {
-        final entries = _buildEntriesFromItems(matched);
+        final entries = buildEntriesFromItems(matched);
         return ApiResult.success(entries);
       }
 
@@ -524,7 +524,7 @@ class CyclingApiService {
         }).toList();
 
         if (scrapedMatched.isNotEmpty) {
-          final entries = _buildEntriesFromItems(scrapedMatched);
+          final entries = buildEntriesFromItems(scrapedMatched);
           if (kDebugMode) {
             final names = entries.map((e) => e.riderName).toList();
             debugPrint('[Scrape] fetchRaceOrgan(${ApiConstants.venueName(meet)}, '
@@ -789,32 +789,90 @@ class CyclingApiService {
   }
 
   /// 출주표 아이템에서 RaceEntry 목록 생성
-  List<RaceEntry> _buildEntriesFromItems(List<Map<String, dynamic>> items) {
+  @visibleForTesting
+  List<RaceEntry> buildEntriesFromItems(List<Map<String, dynamic>> items) {
     final entries = <RaceEntry>[];
     for (final m in items) {
       final backNo = int.tryParse(m['back_no']?.toString() ?? '') ?? (entries.length + 1);
+      final runDays = _numFrom(m, 'run_day_tcnt');
+      final recent = _recentOutings(m);
       entries.add(RaceEntry(
         lineNo: backNo,
         riderName: m['racer_nm']?.toString().trim() ?? '선수$backNo',
         riderId: m['racer_nm']?.toString().trim() ?? 'R$backNo',
         grade: m['racer_grd_cd']?.toString() ?? m['racer_grd_cur_cd']?.toString() ?? '',
         tactic: _extractTactic(m),
-        avgScore: double.tryParse(m['tot_tms_avg_scr']?.toString() ?? '') ?? 0,
+        avgScore: _numFrom(m, 'tot_tms_avg_scr'),
         recent3Wins: int.tryParse(m['pre_win_cnt']?.toString() ?? '') ?? 0,
+        riderGrade: m['racer_grd_cur_cd']?.toString().trim() ?? '',
+        areaAvgScore: _numFrom(m, 'area_tms3_avg_scr'),
+        winRate: _numFrom(m, 'win_rate'),
+        recentFinishes: [for (final outing in recent) outing.finish],
+        recentClasses: [for (final outing in recent) outing.raceClass],
+        sprint200m: _parseSeconds(m['rec_200m_scr']?.toString()),
+        age: int.tryParse(m['racer_age']?.toString() ?? '') ?? 0,
+        trainingPlace: m['trng_plc_nm']?.toString().trim() ?? '',
+        markWinRatio:
+            runDays > 0 ? _numFrom(m, 'mrk_win_cnt') / runDays : 0,
       ));
     }
     entries.sort((a, b) => a.lineNo.compareTo(b.lineNo));
     return entries;
   }
 
+  double _numFrom(Map<String, dynamic> m, String key) =>
+      double.tryParse(m[key]?.toString().trim() ?? '') ?? 0;
+
+  /// `12"00` 형식의 기록을 초 단위로 변환한다. 값이 없으면 0.
+  double _parseSeconds(String? raw) {
+    final matched = RegExp(r'(\d+)"(\d+)').firstMatch(raw ?? '');
+    if (matched == null) return 0;
+    return double.tryParse('${matched.group(1)}.${matched.group(2)}') ?? 0;
+  }
+
+  /// 최근 성적을 최신순으로 (등급값, 착순)으로 반환한다.
+  ///
+  /// 값은 `우수 3-5`(등급 · 경주번호-착순) 형태이고, 결장은 `결 장`으로 온다.
+  /// 공공 API는 직전 3회차만 주지만, 크롤링 자료에는 이번 회차의 지난 일차
+  /// (`cur_day*`)도 있어 더 최신 성적부터 반영한다.
+  List<({double raceClass, int finish})> _recentOutings(
+    Map<String, dynamic> m,
+  ) {
+    const classValues = {'특선': 3.0, '우수': 2.0, '선발': 1.0};
+    final pattern = RegExp(r'(특선|우수|선발)?\s*(\d+)\s*-\s*(\d+)');
+    final outings = <({double raceClass, int finish})>[];
+
+    final keys = [
+      'cur_day2_rank',
+      'cur_day1_rank',
+      for (final tms in [1, 2, 3])
+        for (final day in [3, 2, 1]) 'bf${tms}_day${day}_rank',
+    ];
+
+    for (final key in keys) {
+      final matched = pattern.firstMatch(m[key]?.toString() ?? '');
+      if (matched == null) continue;
+      final finish = int.tryParse(matched.group(3) ?? '') ?? 0;
+      if (finish < 1 || finish > 9) continue;
+      outings.add((
+        raceClass: classValues[matched.group(1)] ?? 2.0,
+        finish: finish,
+      ));
+    }
+    return outings;
+  }
+
+  /// 각질별 승수 중 가장 많은 쪽을 주 전법으로 본다.
   String _extractTactic(Map<String, dynamic> m) {
-    final winCnt = int.tryParse(m['win_tot_tcnt']?.toString() ?? '') ?? 0;
-    final brkCnt = int.tryParse(m['brk_win_cnt']?.toString() ?? '') ?? 0;
-    final mrkCnt = int.tryParse(m['mrk_win_cnt']?.toString() ?? '') ?? 0;
-    if (brkCnt > mrkCnt && brkCnt > 0) return '선행';
-    if (mrkCnt > brkCnt && mrkCnt > 0) return '마크';
-    if (winCnt > 0) return '추입';
-    return '';
+    final counts = {
+      '선행': _numFrom(m, 'pre_win_cnt'),
+      '젖히기': _numFrom(m, 'brk_win_cnt'),
+      '마크': _numFrom(m, 'mrk_win_cnt'),
+      '추입': _numFrom(m, 'pas_win_cnt'),
+    };
+    final best = counts.entries.reduce((a, b) => b.value > a.value ? b : a);
+    if (best.value <= 0) return '';
+    return best.key;
   }
 
   RaceResult _parseRaceResult(Map<String, dynamic> m) {
