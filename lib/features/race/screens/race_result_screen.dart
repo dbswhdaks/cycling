@@ -1573,8 +1573,9 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '착순과 확정 배당은 공공데이터포털(국민체육진흥공단) 경주결과 API의 동일 자료 기준이며, '
-              '주행시간·착차는 경륜 공식 사이트(KCYCLE) 경주결과에서 가져옵니다.',
+              '광명은 공공데이터포털(국민체육진흥공단) 경주결과 API와 경륜 공식 사이트(KCYCLE)를, '
+              '창원·부산은 창원레포츠파크 경주결과를 사용합니다. '
+              '착순과 확정 배당은 언제나 같은 자료에서 함께 가져옵니다.',
               style: theme.textTheme.bodySmall?.copyWith(
                 color: const Color(0xFF3B82F6).withValues(alpha: 0.8),
                 height: 1.4,

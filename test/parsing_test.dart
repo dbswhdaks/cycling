@@ -4,6 +4,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:cycling/core/services/cycling_api_service.dart';
 import 'package:cycling/core/services/kcycle_result_service.dart';
+import 'package:cycling/core/services/lepopark_result_service.dart';
 import 'package:cycling/core/services/venue_scraping_service.dart';
 
 /// 실제 응답을 잘라 저장한 픽스처로 파싱을 검증한다.
@@ -48,6 +49,13 @@ void main() {
 
     test('표가 없으면 빈 목록', () {
       expect(KcycleResultService().parseRankTable('<html></html>'), isEmpty);
+    });
+
+    test('경기장 코드는 KCYCLE 표기를 따른다', () {
+      // 부산은 003이 아니라 004다. 003으로 요청하면 오류 페이지가 돌아온다.
+      expect(KcycleResultService.meetCodes[1], '001');
+      expect(KcycleResultService.meetCodes[2], '002');
+      expect(KcycleResultService.meetCodes[3], '004');
     });
   });
 
@@ -119,51 +127,87 @@ void main() {
     });
   });
 
-  group('크롤링 결과 편성 검증', () {
+  group('lepopark 경주결과 파싱', () {
+    final parsed = LepoparkResultService()
+        .parseResultPage(_fixture('lepopark_result.html'));
+
+    test('경기장별로 경주가 갈린다', () {
+      expect(parsed[2]?.keys, [6]);
+      expect(parsed[3]?.keys, [1, 6]);
+      expect(parsed[1]?.keys, [7]);
+    });
+
+    test('부산 1경주 착순표', () {
+      final race = parsed[3]![1]!;
+
+      expect(race.grade, '선발');
+      expect(race.ranks.length, 7);
+      expect(race.ranks.map((r) => r['rank']), [1, 2, 3, 4, 5, 6, 7]);
+      expect(race.ranks.first['back_no'], 6);
+      expect(race.ranks.first['racer_nm'], '김종재');
+      expect(race.ranks.first['racer_no'], '20050019');
+      expect(race.ranks.first['race_time'], '2:31:0410');
+      expect(race.ranks.first['tactic'], '추입');
+      expect(race.ranks.first['time_200m'], '12"11');
+      expect(race.ranks.first['avg_speed'], '59.45');
+
+      final second = race.ranks[1];
+      expect(second['back_no'], 1);
+      expect(second['racer_nm'], '김이남');
+      expect(second['arrival_diff'], '3/4W');
+    });
+
+    test('부산 1경주 확정배당 - 승식 일곱 가지', () {
+      final payoff = parsed[3]![1]!.payoff;
+
+      expect(payoff.win, {6: 2.4});
+      // 연승은 1·2착 두 명이 각각 배당을 받는다.
+      expect(payoff.place, {1: 2.1, 6: 1.8});
+      expect(payoff.exacta, {'6-1': 4.2});
+      expect(payoff.quinella, {'1-6': 2.7});
+      expect(payoff.trio, {'1-2-6': 3.4});
+      expect(payoff.exactaTrio, {'6-1-2': 3.9});
+      expect(payoff.trifecta, {'6-1-2': 8.6});
+    });
+
+    test('승부수가 없는 선수는 빈 문자열', () {
+      final race = parsed[3]![1]!;
+      final noTactic = race.ranks.firstWhere((r) => r['back_no'] == 5);
+
+      expect(noTactic['tactic'], '');
+    });
+
+    test('착순이 없으면 경주를 만들지 않는다', () {
+      expect(
+        LepoparkResultService().parseResultPage('<html><body></body></html>'),
+        isEmpty,
+      );
+    });
+  });
+
+  group('크롤링 결과 검증', () {
     final scraped = [
       {'race_no': '1', 'racer_nm': '송정욱'},
       {'race_no': '6', 'racer_nm': '김원호'},
     ];
 
-    test('편성에 없는 경주는 제외된다', () {
-      final kept = CyclingApiService().validateScrapedRaces(
-        scraped,
-        '20260830',
-        2,
-        {
-          2: {
-            1: {'송정욱'},
-          },
-        },
-      );
-
-      expect(kept.map((m) => m['race_no']), ['1']);
-    });
-
-    test('시행 기록이 없는 경기장은 전부 폐기된다', () {
+    test('공공 API 편성에 없는 경주도 남긴다', () {
+      // 순위 API는 부산을 2026년 6월 이후 싣지 않고 창원도 일부 경주를 빠뜨린다.
+      // 편성표를 근거로 버리면 실제로 열린 경주가 통째로 사라진다.
       final kept = CyclingApiService().validateScrapedRaces(
         scraped,
         '20260830',
         3,
-        {
-          1: {
-            1: {'김옥철'},
-          },
-        },
       );
 
-      expect(kept, isEmpty);
+      expect(kept.map((m) => m['race_no']), ['1', '6']);
     });
 
-    test('편성 자체를 모르면(시행 전) 걸러내지 않는다', () {
-      final kept = CyclingApiService().validateScrapedRaces(
-        scraped,
-        '20260904',
-        2,
-        const {},
+    test('빈 목록은 그대로 빈 목록', () {
+      expect(
+        CyclingApiService().validateScrapedRaces([], '20260830', 2),
+        isEmpty,
       );
-
-      expect(kept.length, 2);
     });
   });
 }

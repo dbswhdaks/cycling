@@ -10,11 +10,17 @@ import 'package:html/parser.dart' as html_parser;
 ///
 /// 상세 URL 형식:
 /// `/race/result/general/{연도}/{회차}/{일차}/{경기장코드}/{경주번호}`
-/// (경기장코드: 001 광명, 002 창원, 003 부산)
 class KcycleResultService {
   KcycleResultService();
 
   static const String _baseUrl = 'https://www.kcycle.or.kr/race/result/general';
+
+  /// 앱 경기장 코드 → KCYCLE 경기장 코드.
+  ///
+  /// KCYCLE은 부산에 003이 아니라 004를 쓴다. 003으로 요청하면 오류 페이지가
+  /// 돌아와 상세 착순을 한 건도 얻지 못한다.
+  @visibleForTesting
+  static const Map<int, String> meetCodes = {1: '001', 2: '002', 3: '004'};
 
   final Dio _dio = Dio(
     BaseOptions(
@@ -41,7 +47,9 @@ class KcycleResultService {
   }) async {
     if (round <= 0 || dayOrd <= 0) return [];
 
-    final meetCd = meet.toString().padLeft(3, '0');
+    final meetCd = meetCodes[meet];
+    if (meetCd == null) return [];
+
     final raceNoStr = raceNo.toString().padLeft(2, '0');
     final key = '$year/$round/$dayOrd/$meetCd/$raceNoStr';
     if (_cache.containsKey(key)) return _cache[key]!;

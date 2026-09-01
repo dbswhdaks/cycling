@@ -136,7 +136,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
             Expanded(
               child: racesAsync.when(
                 data: (result) => result.data.isEmpty
-                    ? _buildEmptyState(result.apiError)
+                    ? _buildEmptyState(selectedVenue, result.apiError)
                     : ListView.separated(
                         padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
                         itemCount: result.data.length,
@@ -495,7 +495,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
 
   // ─── 빈 상태 ───
 
-  Widget _buildEmptyState(String? apiError) {
+  Widget _buildEmptyState(int venue, String? apiError) {
     return Center(
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -524,8 +524,55 @@ class _HomeScreenState extends ConsumerState<HomeScreen> with WidgetsBindingObse
               ),
             ),
           ],
+          _buildLastRaceHint(venue),
         ],
       ),
+    );
+  }
+
+  /// 선택한 날 이전에 마지막으로 경주가 있었던 날을 안내한다.
+  ///
+  /// 창원·부산은 번갈아 시행해 몇 달씩 경주가 없다. 이때 빈 화면만 보이면
+  /// 자료를 못 불러온 것으로 오해하기 쉬워 마지막 시행일과 이동 버튼을 둔다.
+  Widget _buildLastRaceHint(int venue) {
+    final lastDate = ref.watch(lastRaceDateProvider(venue)).valueOrNull;
+    if (lastDate == null || lastDate.length != 8) return const SizedBox.shrink();
+
+    final selectedYmd = _dateToYmd(ref.watch(selectedDateProvider));
+    if (lastDate.compareTo(selectedYmd) >= 0) return const SizedBox.shrink();
+
+    final label =
+        '${lastDate.substring(0, 4)}.${lastDate.substring(4, 6)}.${lastDate.substring(6)}';
+
+    return Column(
+      children: [
+        const SizedBox(height: 10),
+        Text(
+          '최근 경주일은 $label 입니다',
+          style: TextStyle(
+            color: Colors.white.withValues(alpha: 0.4),
+            fontSize: 13,
+          ),
+        ),
+        const SizedBox(height: 10),
+        OutlinedButton.icon(
+          onPressed: () {
+            ref.read(selectedDateProvider.notifier).state = DateTime(
+              int.parse(lastDate.substring(0, 4)),
+              int.parse(lastDate.substring(4, 6)),
+              int.parse(lastDate.substring(6)),
+            );
+          },
+          icon: const Icon(Icons.history_rounded, size: 18),
+          label: const Text('그날 경주 보기'),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: const Color(0xFFFBBF24),
+            side: BorderSide(
+              color: const Color(0xFFFBBF24).withValues(alpha: 0.5),
+            ),
+          ),
+        ),
+      ],
     );
   }
 

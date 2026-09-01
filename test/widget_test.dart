@@ -25,6 +25,10 @@ class _OfflineApiService extends CyclingApiService {
   @override
   Future<bool?> venueRaced({required int meet, required String date}) async =>
       null;
+
+  @override
+  Future<String?> latestRaceDate({required int meet, required int year}) async =>
+      null;
 }
 
 void main() {

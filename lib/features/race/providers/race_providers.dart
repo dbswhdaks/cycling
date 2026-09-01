@@ -4,6 +4,7 @@ import '../../../core/constants/api_constants.dart';
 import '../../../core/constants/iap_constants.dart';
 import '../../../core/services/cycling_api_service.dart';
 import '../../../core/services/kcycle_result_service.dart';
+import '../../../core/services/lepopark_result_service.dart';
 import '../../../core/services/prediction_engine.dart';
 import '../../../core/services/supabase_backup_service.dart';
 import '../../../features/admin/providers/admin_auth_provider.dart';
@@ -23,6 +24,10 @@ final cyclingApiServiceProvider = Provider<CyclingApiService>((ref) {
 
 final kcycleResultServiceProvider = Provider<KcycleResultService>((ref) {
   return KcycleResultService();
+});
+
+final lepoparkResultServiceProvider = Provider<LepoparkResultService>((ref) {
+  return LepoparkResultService();
 });
 
 /// 아직 시행되지 않은 경주
@@ -135,6 +140,24 @@ final monthRaceDatesProvider =
 
       return {};
     });
+
+/// 경기장별 최근 시행일 (yyyyMMdd). 올해 기록이 없으면 작년까지 거슬러 찾는다.
+///
+/// 창원·부산은 번갈아 시행해 몇 달씩 경주가 없다. 빈 목록만 보여주면
+/// 자료를 못 불러온 것으로 오해하기 쉬워 마지막 시행일을 함께 안내한다.
+final lastRaceDateProvider = FutureProvider.family<String?, int>((
+  ref,
+  venue,
+) async {
+  final api = ref.watch(cyclingApiServiceProvider);
+  final thisYear = DateTime.now().year;
+
+  for (final year in [thisYear, thisYear - 1]) {
+    final date = await api.latestRaceDate(meet: venue, year: year);
+    if (date != null) return date;
+  }
+  return null;
+});
 
 /// 경주 목록 - API → Supabase 캐시
 final raceListProvider =
@@ -330,11 +353,57 @@ final raceResultProvider =
         }
       }
 
+      final lepopark = await _lepoparkRace(ref, params);
+      if (lepopark != null) {
+        if (kDebugMode) {
+          debugPrint('[Provider] raceResult: lepopark 결과 사용');
+        }
+        return _raceResultFrom(lepopark);
+      }
+
       if (_isRaceDateNotFinished(params.date)) {
         throw const RaceNotYetException();
       }
       throw const RaceDataUnavailableException();
     });
+
+/// 창원레포츠파크에서 해당 경주의 확정 결과를 찾는다.
+///
+/// 광명은 공공데이터 API가 전 경주를 싣기 때문에 조회하지 않는다.
+Future<LepoparkRaceResult?> _lepoparkRace(
+  Ref ref,
+  ({int venue, String date, int raceNo}) params,
+) async {
+  if (params.venue == 1) return null;
+
+  final service = ref.watch(lepoparkResultServiceProvider);
+  final race = await service.fetchRace(
+    meet: params.venue,
+    date: params.date,
+    raceNo: params.raceNo,
+  );
+  return (race != null && race.ranks.isNotEmpty) ? race : null;
+}
+
+/// 크롤링한 착순표를 경주 결과 모델로 옮긴다.
+///
+/// 회차·일차는 KCYCLE 상세 조회에만 쓰이는데 이 경로에서는 필요 없으므로 0으로 둔다.
+RaceResult _raceResultFrom(LepoparkRaceResult race) {
+  final placings = race.placings;
+  ({int backNo, String name}) at(int index) =>
+      index < placings.length ? placings[index] : (backNo: 0, name: '');
+
+  return RaceResult(
+    raceNo: race.raceNo,
+    first: at(0).name,
+    firstNo: at(0).backNo,
+    second: at(1).name,
+    secondNo: at(1).backNo,
+    third: at(2).name,
+    thirdNo: at(2).backNo,
+    payoff: race.payoff,
+  );
+}
 
 /// 경주 순위 목록
 ///
@@ -362,6 +431,14 @@ final raceRankProvider =
           }
           return _withGrades(details, entries);
         }
+      }
+
+      final lepopark = await _lepoparkRace(ref, params);
+      if (lepopark != null) {
+        if (kDebugMode) {
+          debugPrint('[Provider] raceRank: lepopark 상세 ${lepopark.ranks.length}건 사용');
+        }
+        return _withGrades(lepopark.ranks, entries);
       }
 
       final api = ref.watch(cyclingApiServiceProvider);

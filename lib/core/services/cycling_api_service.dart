@@ -164,11 +164,10 @@ class CyclingApiService {
     try {
       final scraped = await (_scrapingFutures[date] ??=
           _scraper.scrapeRaceData(date));
-      final roster = await _fetchDayRoster(date);
 
       for (final entry in scraped.entries) {
         _scrapeCache['${date}_${entry.key}'] =
-            validateScrapedRaces(entry.value, date, entry.key, roster);
+            validateScrapedRaces(entry.value, date, entry.key);
       }
 
       return _scrapeCache[cacheKey] ?? [];
@@ -221,8 +220,14 @@ class CyclingApiService {
 
   /// 해당 날짜에 이 경기장이 실제로 경주를 시행했는지 확인한다.
   ///
-  /// 아직 시행 전이라 편성 기록 자체가 없으면 판단할 수 없으므로 null을 반환한다.
+  /// 판단할 근거가 없으면 null을 반환한다. 창원·부산은 공공데이터 편성표가
+  /// 불완전해 시행 여부를 물을 수 없으므로 광명만 편성표로 판단한다.
   Future<bool?> venueRaced({required int meet, required String date}) async {
+    if (meet != 1) {
+      final scraped = await _getScrapedData(meet, date);
+      return scraped.isNotEmpty ? true : null;
+    }
+
     final roster = await _fetchDayRoster(date);
     if (roster.isEmpty) return null;
     return roster.containsKey(meet);
@@ -236,41 +241,18 @@ class CyclingApiService {
     return null;
   }
 
-  /// 크롤링 결과를 실제 편성과 대조해 존재하지 않는 경주를 제거한다.
+  /// 크롤링 결과에서 경기장이 잘못 붙은 경주를 제거한다.
   ///
-  /// 크롤링 원본에는 그날 시행되지 않은 경주가 섞여 들어오는 사례가 있다.
-  /// 시행 기록이 있으면 그것을 기준으로 삼고, 아직 시행 전이라 기록이 없으면
-  /// 광명 출주표와 대조하는 최소 검증만 적용한다.
+  /// 공공데이터 순위 API는 부산을 2026년 6월 이후 전혀 싣지 않고 창원도 일부
+  /// 경주를 빠뜨린다. 그래서 API 편성표에 없다는 이유로 크롤링 결과를 버리면
+  /// 실제로 열린 경주가 통째로 사라진다. 경기장 표기 오류만 걸러낸다.
   @visibleForTesting
   List<Map<String, dynamic>> validateScrapedRaces(
     List<Map<String, dynamic>> scraped,
     String date,
     int meet,
-    Map<int, Map<int, Set<String>>> roster,
-  ) {
-    if (scraped.isEmpty || roster.isEmpty) {
-      return _dropMislabeledRaces(scraped, date, meet);
-    }
-
-    final venueName = ApiConstants.venueName(meet);
-    final held = roster[meet];
-    if (held == null || held.isEmpty) {
-      if (kDebugMode) {
-        debugPrint('[Scrape] $venueName $date: 시행 기록 없음 → 크롤링 결과 폐기');
-      }
-      return const [];
-    }
-
-    final kept = scraped
-        .where((m) => held.containsKey(int.tryParse(m['race_no']?.toString() ?? '')))
-        .toList();
-
-    if (kDebugMode && kept.length != scraped.length) {
-      debugPrint('[Scrape] $venueName $date: 편성에 없는 경주 제외 '
-          '(${scraped.length} → ${kept.length}명분)');
-    }
-    return kept;
-  }
+  ) =>
+      _dropMislabeledRaces(scraped, date, meet);
 
   /// 크롤링 원본이 광명 경주를 창원·부산으로 잘못 표기하는 경우가 있어,
   /// 같은 날 광명 출주표에 있는 선수로 채워진 경주는 제외한다.
@@ -447,6 +429,58 @@ class CyclingApiService {
     } catch (e) {
       return ApiResult.failure('파싱 오류: $e');
     }
+  }
+
+  /// 경기장별 최근 시행일 캐시  key = '경기장코드_연도'
+  final Map<String, String?> _latestRaceDateCache = {};
+
+  /// 해당 연도에 이 경기장이 마지막으로 경주를 시행한 날(yyyyMMdd)을 반환한다.
+  ///
+  /// 빈 화면에 "언제까지 경주가 있었는지"를 알려주기 위해 사용한다.
+  /// 창원·부산은 경주결과 API가 최신 자료를 싣지 않으므로, 세 경기장이 같은
+  /// 날에 함께 열린다는 점을 이용해 광명의 최근 시행일을 크롤링으로 확인한다.
+  Future<String?> latestRaceDate({required int meet, required int year}) async {
+    final key = '${meet}_$year';
+    if (_latestRaceDateCache.containsKey(key)) return _latestRaceDateCache[key];
+
+    final latest = meet == 1
+        ? await _latestResultDate(meet: meet, year: year)
+        : await _latestScrapedDate(meet: meet, year: year);
+
+    _latestRaceDateCache[key] = latest;
+    return latest;
+  }
+
+  Future<String?> _latestResultDate({
+    required int meet,
+    required int year,
+  }) async {
+    String? latest;
+    try {
+      final items = await _fetchResultPages(year: year.toString(), meet: meet);
+      for (final item in items) {
+        final mmdd = _toMmdd(item['race_ymd']?.toString() ?? '');
+        if (mmdd.length != 4) continue;
+        final ymd = '$year$mmdd';
+        if (latest == null || ymd.compareTo(latest) > 0) latest = ymd;
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('[API] 최근 시행일 조회 실패(meet=$meet): $e');
+      return null;
+    }
+    return latest;
+  }
+
+  /// 광명의 최근 시행일에 이 경기장도 경주를 열었는지 크롤링으로 확인한다.
+  Future<String?> _latestScrapedDate({
+    required int meet,
+    required int year,
+  }) async {
+    final reference = await _latestResultDate(meet: 1, year: year);
+    if (reference == null) return null;
+
+    final scraped = await _getScrapedData(meet, reference);
+    return scraped.isNotEmpty ? reference : null;
   }
 
   /// 경주결과 원시 데이터를 페이징 조회 (연도·경기장·경주번호 기준)
