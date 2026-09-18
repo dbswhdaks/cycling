@@ -15,7 +15,7 @@ import os
 
 import numpy as np
 
-from evaluate import DATA_DIR, evaluate, load_races, report, score_current, score_tot_avg
+from evaluate import DATA_DIR, evaluate, load_races, report, score_legacy, score_tot_avg
 from fit_model import FEATURES, fit_conditional_logit, make_scorer, prepare, race_matrix
 
 CANDIDATES = {
@@ -57,7 +57,7 @@ def main() -> None:
     x2026, w2026 = prepare(y2026)
 
     lines = ["후보별 검증 (학습 → 검증)", ""]
-    lines.append(report("현재 엔진 (2026)", evaluate(y2026, score_current)))
+    lines.append(report("이전 단순 엔진 (2026)", evaluate(y2026, score_legacy)))
     lines.append(report("통산 득점만 (2026)", evaluate(y2026, score_tot_avg)))
     lines.append("")
 
@@ -75,7 +75,9 @@ def main() -> None:
         lines.append(f"{'':22s}가중치 최대 변동 {drift:.3f}")
         lines.append("")
 
-    final_names = CANDIDATES["9개(line_best 제외)"]
+    # 양방향 시간 분할에서 1착·연대·쌍승 지표가 모두 가장 높았던 전체 피처를
+    # 최종 모델로 선택한다.
+    final_names = CANDIDATES["전체"]
     columns = columns_of(final_names)
     both_x = x2025 + x2026
     both_y = w2025 + w2026

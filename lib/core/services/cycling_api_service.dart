@@ -14,13 +14,9 @@ class ApiResult<T> {
   final String? errorMessage;
   final bool isSuccess;
 
-  const ApiResult.success(this.data)
-      : errorMessage = null,
-        isSuccess = true;
+  const ApiResult.success(this.data) : errorMessage = null, isSuccess = true;
 
-  const ApiResult.failure(this.errorMessage)
-      : data = null,
-        isSuccess = false;
+  const ApiResult.failure(this.errorMessage) : data = null, isSuccess = false;
 }
 
 /// 경륜 공공데이터 API 서비스
@@ -45,11 +41,11 @@ class CyclingApiService {
   final Map<String, List<Map<String, dynamic>>> _scrapeCache = {};
 
   Map<String, dynamic> _baseParams({int pageNo = 1, int numOfRows = 1000}) => {
-        'serviceKey': ApiConstants.serviceKey,
-        'pageNo': pageNo,
-        'numOfRows': numOfRows,
-        'resultType': 'json',
-      };
+    'serviceKey': ApiConstants.serviceKey,
+    'pageNo': pageNo,
+    'numOfRows': numOfRows,
+    'resultType': 'json',
+  };
 
   // ─────────────────────────── 전체 출주표 (경기장별 개별 로드) ───────────────────────────
 
@@ -93,14 +89,15 @@ class CyclingApiService {
           .map((m) => m['racer_nm']?.toString() ?? '?')
           .toSet()
           .toList();
-      debugPrint('[API] 광명 API: ${items.length}건 (${sw.elapsedMilliseconds}ms), '
-          '선수 샘플=$sampleNames');
+      debugPrint(
+        '[API] 광명 API: ${items.length}건 (${sw.elapsedMilliseconds}ms), '
+        '선수 샘플=$sampleNames',
+      );
       debugPrint('[API] 창원·부산 → 크롤링 대기');
     }
 
     _loadedYears.add(year);
   }
-
 
   /// 페이징 처리하여 출주표 원시 데이터를 반환
   Future<List<Map<String, dynamic>>> _fetchOrganPages({
@@ -118,14 +115,19 @@ class CyclingApiService {
         'meet': meet,
       };
 
-      final res = await _dio.get(ApiConstants.raceOrgan, queryParameters: params);
+      final res = await _dio.get(
+        ApiConstants.raceOrgan,
+        queryParameters: params,
+      );
       final error = _checkApiError(res.data);
       if (error != null) break;
 
       if (page == 1) {
         totalCount = _extractTotalCount(res.data);
         if (kDebugMode && items.isEmpty) {
-          debugPrint('[API] _fetchOrganPages(meet=$meet): totalCount=$totalCount');
+          debugPrint(
+            '[API] _fetchOrganPages(meet=$meet): totalCount=$totalCount',
+          );
         }
       }
 
@@ -145,29 +147,37 @@ class CyclingApiService {
     }
 
     if (kDebugMode && items.isNotEmpty) {
-      debugPrint('[API] _fetchOrganPages(meet=$meet): keys=${items.first.keys.toList()}');
+      debugPrint(
+        '[API] _fetchOrganPages(meet=$meet): keys=${items.first.keys.toList()}',
+      );
     }
 
     return items;
   }
 
-
   /// 진행 중인 날짜별 크롤링 Future (같은 날짜의 중복 요청만 합친다)
   final Map<String, Future<Map<int, List<Map<String, dynamic>>>>>
-      _scrapingFutures = {};
+  _scrapingFutures = {};
 
   /// 날짜별 스크래핑 데이터 조회 (캐시 활용, 중복 요청 방지).
-  Future<List<Map<String, dynamic>>> _getScrapedData(int meet, String date) async {
+  Future<List<Map<String, dynamic>>> _getScrapedData(
+    int meet,
+    String date,
+  ) async {
     final cacheKey = '${date}_$meet';
     if (_scrapeCache.containsKey(cacheKey)) return _scrapeCache[cacheKey]!;
 
     try {
-      final scraped = await (_scrapingFutures[date] ??=
-          _scraper.scrapeRaceData(date));
+      final scraped = await (_scrapingFutures[date] ??= _scraper.scrapeRaceData(
+        date,
+      ));
 
       for (final entry in scraped.entries) {
-        _scrapeCache['${date}_${entry.key}'] =
-            validateScrapedRaces(entry.value, date, entry.key);
+        _scrapeCache['${date}_${entry.key}'] = validateScrapedRaces(
+          entry.value,
+          date,
+          entry.key,
+        );
       }
 
       return _scrapeCache[cacheKey] ?? [];
@@ -191,11 +201,14 @@ class CyclingApiService {
 
     final roster = <int, Map<int, Set<String>>>{};
     try {
-      final res = await _dio.get(ApiConstants.raceRank, queryParameters: {
-        ..._baseParams(numOfRows: 1000),
-        'stnd_year': date.substring(0, 4),
-        'race_day': date,
-      });
+      final res = await _dio.get(
+        ApiConstants.raceRank,
+        queryParameters: {
+          ..._baseParams(numOfRows: 1000),
+          'stnd_year': date.substring(0, 4),
+          'race_day': date,
+        },
+      );
 
       if (_checkApiError(res.data) == null) {
         for (final item in _extractItems(res.data)) {
@@ -251,8 +264,7 @@ class CyclingApiService {
     List<Map<String, dynamic>> scraped,
     String date,
     int meet,
-  ) =>
-      _dropMislabeledRaces(scraped, date, meet);
+  ) => _dropMislabeledRaces(scraped, date, meet);
 
   /// 크롤링 원본이 광명 경주를 창원·부산으로 잘못 표기하는 경우가 있어,
   /// 같은 날 광명 출주표에 있는 선수로 채워진 경주는 제외한다.
@@ -280,7 +292,9 @@ class CyclingApiService {
 
     final byRaceNo = <String, List<Map<String, dynamic>>>{};
     for (final item in scraped) {
-      byRaceNo.putIfAbsent(item['race_no']?.toString() ?? '', () => []).add(item);
+      byRaceNo
+          .putIfAbsent(item['race_no']?.toString() ?? '', () => [])
+          .add(item);
     }
 
     final kept = <Map<String, dynamic>>[];
@@ -299,8 +313,10 @@ class CyclingApiService {
     }
 
     if (kDebugMode && dropped.isNotEmpty) {
-      debugPrint('[Scrape] ${ApiConstants.venueName(meet)} $date: '
-          '광명 선수로 채워진 ${dropped.join(",")}경주 제외');
+      debugPrint(
+        '[Scrape] ${ApiConstants.venueName(meet)} $date: '
+        '광명 선수로 채워진 ${dropped.join(",")}경주 제외',
+      );
     }
     return kept;
   }
@@ -336,7 +352,9 @@ class CyclingApiService {
       final targetYmd = _toApiDateFormat(date);
 
       final allItems = await fetchAllOrganData(meet: meet, year: year);
-      final matched = allItems.where((m) => m['race_ymd']?.toString() == targetYmd).toList();
+      final matched = allItems
+          .where((m) => m['race_ymd']?.toString() == targetYmd)
+          .toList();
 
       if (matched.isNotEmpty) {
         final races = _buildRacesFromItems(matched, meet, date);
@@ -349,8 +367,10 @@ class CyclingApiService {
         if (scraped.isNotEmpty) {
           final races = _buildRacesFromItems(scraped, meet, date);
           if (kDebugMode) {
-            debugPrint('[Scrape] fetchRaceList(${ApiConstants.venueName(meet)}): '
-                '${races.length}경주 크롤링 성공');
+            debugPrint(
+              '[Scrape] fetchRaceList(${ApiConstants.venueName(meet)}): '
+              '${races.length}경주 크롤링 성공',
+            );
           }
           return ApiResult.success(races);
         }
@@ -413,14 +433,18 @@ class CyclingApiService {
       final targetMmdd = _toMmdd(date);
       final venue = ApiConstants.venueApiName(meet);
       final matched = items.where((m) {
-        if (_toMmdd(m['race_ymd']?.toString() ?? '') != targetMmdd) return false;
+        if (_toMmdd(m['race_ymd']?.toString() ?? '') != targetMmdd) {
+          return false;
+        }
         final nm = m['meet_nm']?.toString().trim() ?? '';
         return nm.isEmpty || nm == venue;
       }).toList();
 
       if (kDebugMode) {
-        debugPrint('[API] fetchRaceResult($venue, $date, R$rcNo): '
-            '${items.length}건 중 ${matched.length}건 일치');
+        debugPrint(
+          '[API] fetchRaceResult($venue, $date, R$rcNo): '
+          '${items.length}건 중 ${matched.length}건 일치',
+        );
       }
 
       return ApiResult.success(matched.map(_parseRaceResult).toList());
@@ -501,7 +525,10 @@ class CyclingApiService {
         if (rcNo != null) 'race_no': rcNo.toString().padLeft(2, '0'),
       };
 
-      final res = await _dio.get(ApiConstants.raceResult, queryParameters: params);
+      final res = await _dio.get(
+        ApiConstants.raceResult,
+        queryParameters: params,
+      );
       if (_checkApiError(res.data) != null) break;
 
       if (page == 1) totalCount = _extractTotalCount(res.data);
@@ -561,8 +588,10 @@ class CyclingApiService {
           final entries = buildEntriesFromItems(scrapedMatched);
           if (kDebugMode) {
             final names = entries.map((e) => e.riderName).toList();
-            debugPrint('[Scrape] fetchRaceOrgan(${ApiConstants.venueName(meet)}, '
-                'R$rcNo): ${entries.length}명 $names');
+            debugPrint(
+              '[Scrape] fetchRaceOrgan(${ApiConstants.venueName(meet)}, '
+              'R$rcNo): ${entries.length}명 $names',
+            );
           }
           return ApiResult.success(entries);
         }
@@ -680,7 +709,10 @@ class CyclingApiService {
         'race_no': rcNo.toString().padLeft(2, '0'),
       };
 
-      final res = await _dio.get(ApiConstants.raceRank, queryParameters: params);
+      final res = await _dio.get(
+        ApiConstants.raceRank,
+        queryParameters: params,
+      );
       final error = _checkApiError(res.data);
       if (error != null) return ApiResult.failure(error);
 
@@ -701,6 +733,8 @@ class CyclingApiService {
           'racer_grd_cd': '',
           'race_time': '',
           'arrival_diff': '',
+          'round': int.tryParse(m['tms']?.toString() ?? '') ?? 0,
+          'day_ord': int.tryParse(m['day_ord']?.toString() ?? '') ?? 0,
         });
       }
 
@@ -712,8 +746,10 @@ class CyclingApiService {
       });
 
       if (kDebugMode) {
-        debugPrint('[API] fetchRaceRank(${ApiConstants.venueApiName(meet)}, '
-            '$date, R$rcNo): ${ranks.length}명');
+        debugPrint(
+          '[API] fetchRaceRank(${ApiConstants.venueApiName(meet)}, '
+          '$date, R$rcNo): ${ranks.length}명',
+        );
       }
 
       return ApiResult.success(ranks);
@@ -729,7 +765,10 @@ class CyclingApiService {
   Future<ApiResult<String>> testConnection() async {
     try {
       final params = {..._baseParams(numOfRows: 1)};
-      final res = await _dio.get(ApiConstants.raceOrgan, queryParameters: params);
+      final res = await _dio.get(
+        ApiConstants.raceOrgan,
+        queryParameters: params,
+      );
 
       if (res.statusCode == 200) {
         final error = _checkApiError(res.data);
@@ -782,7 +821,9 @@ class CyclingApiService {
       raceMap[rn]!.count++;
       raceMap[rn]!.distance ??= int.tryParse(m['race_len']?.toString() ?? '');
       raceMap[rn]!.departureTime ??= m['dptre_tm']?.toString();
-      raceMap[rn]!.roundCount ??= int.tryParse(m['round_cnt']?.toString() ?? '');
+      raceMap[rn]!.roundCount ??= int.tryParse(
+        m['round_cnt']?.toString() ?? '',
+      );
       raceMap[rn]!.grade ??= _raceGrade(m);
     }
 
@@ -794,17 +835,19 @@ class CyclingApiService {
         return a.compareTo(b);
       });
     return sorted
-        .map((no) => Race(
-              venueCode: meet,
-              date: dateYmd,
-              raceNo: no,
-              venueName: ApiConstants.venueName(meet),
-              distance: raceMap[no]!.distance ?? 0,
-              departureTime: raceMap[no]!.departureTime,
-              racerCount: raceMap[no]!.count,
-              roundCount: raceMap[no]!.roundCount ?? 0,
-              grade: raceMap[no]!.grade ?? '',
-            ))
+        .map(
+          (no) => Race(
+            venueCode: meet,
+            date: dateYmd,
+            raceNo: no,
+            venueName: ApiConstants.venueName(meet),
+            distance: raceMap[no]!.distance ?? 0,
+            departureTime: raceMap[no]!.departureTime,
+            racerCount: raceMap[no]!.count,
+            roundCount: raceMap[no]!.roundCount ?? 0,
+            grade: raceMap[no]!.grade ?? '',
+          ),
+        )
         .toList();
   }
 
@@ -827,28 +870,38 @@ class CyclingApiService {
   List<RaceEntry> buildEntriesFromItems(List<Map<String, dynamic>> items) {
     final entries = <RaceEntry>[];
     for (final m in items) {
-      final backNo = int.tryParse(m['back_no']?.toString() ?? '') ?? (entries.length + 1);
+      final backNo =
+          int.tryParse(m['back_no']?.toString() ?? '') ?? (entries.length + 1);
       final runDays = _numFrom(m, 'run_day_tcnt');
       final recent = _recentOutings(m);
-      entries.add(RaceEntry(
-        lineNo: backNo,
-        riderName: m['racer_nm']?.toString().trim() ?? '선수$backNo',
-        riderId: m['racer_nm']?.toString().trim() ?? 'R$backNo',
-        grade: m['racer_grd_cd']?.toString() ?? m['racer_grd_cur_cd']?.toString() ?? '',
-        tactic: _extractTactic(m),
-        avgScore: _numFrom(m, 'tot_tms_avg_scr'),
-        recent3Wins: int.tryParse(m['pre_win_cnt']?.toString() ?? '') ?? 0,
-        riderGrade: m['racer_grd_cur_cd']?.toString().trim() ?? '',
-        areaAvgScore: _numFrom(m, 'area_tms3_avg_scr'),
-        winRate: _numFrom(m, 'win_rate'),
-        recentFinishes: [for (final outing in recent) outing.finish],
-        recentClasses: [for (final outing in recent) outing.raceClass],
-        sprint200m: _parseSeconds(m['rec_200m_scr']?.toString()),
-        age: int.tryParse(m['racer_age']?.toString() ?? '') ?? 0,
-        trainingPlace: m['trng_plc_nm']?.toString().trim() ?? '',
-        markWinRatio:
-            runDays > 0 ? _numFrom(m, 'mrk_win_cnt') / runDays : 0,
-      ));
+      entries.add(
+        RaceEntry(
+          lineNo: backNo,
+          riderName: m['racer_nm']?.toString().trim() ?? '선수$backNo',
+          riderId: m['racer_nm']?.toString().trim() ?? 'R$backNo',
+          grade:
+              m['racer_grd_cd']?.toString() ??
+              m['racer_grd_cur_cd']?.toString() ??
+              '',
+          tactic: _extractTactic(m),
+          avgScore: _numFrom(m, 'tot_tms_avg_scr'),
+          recent3Wins: int.tryParse(m['pre_win_cnt']?.toString() ?? '') ?? 0,
+          riderGrade: m['racer_grd_cur_cd']?.toString().trim() ?? '',
+          areaAvgScore: _numFrom(m, 'area_tms3_avg_scr'),
+          winRate: _numFrom(m, 'win_rate'),
+          top3Rate: _numFrom(m, 'high_3_rate'),
+          recentFinishes: [for (final outing in recent) outing.finish],
+          recentClasses: [for (final outing in recent) outing.raceClass],
+          sprint200m: _parseSeconds(m['rec_200m_scr']?.toString()),
+          gearRatio: _numFrom(m, 'gear_rate'),
+          age: int.tryParse(m['racer_age']?.toString() ?? '') ?? 0,
+          trainingPlace: m['trng_plc_nm']?.toString().trim() ?? '',
+          leadWinRatio: runDays > 0 ? _numFrom(m, 'pre_win_cnt') / runDays : 0,
+          markWinRatio: runDays > 0 ? _numFrom(m, 'mrk_win_cnt') / runDays : 0,
+          breakWinRatio: runDays > 0 ? _numFrom(m, 'brk_win_cnt') / runDays : 0,
+          passWinRatio: runDays > 0 ? _numFrom(m, 'pas_win_cnt') / runDays : 0,
+        ),
+      );
     }
     entries.sort((a, b) => a.lineNo.compareTo(b.lineNo));
     return entries;
@@ -928,8 +981,8 @@ class CyclingApiService {
       secondNo: at(1).no,
       third: at(2).name,
       thirdNo: at(2).no,
-      round: _intFrom(m, ['week_tcnt']) ?? 0,
-      dayOrd: _intFrom(m, ['day_tcnt']) ?? 0,
+      round: _intFrom(m, ['week_tcnt', 'tms']) ?? 0,
+      dayOrd: _intFrom(m, ['day_tcnt', 'day_ord']) ?? 0,
       payoff: Odds(
         win: _parseSingleOdds(m['pool1_val']?.toString()),
         place: _parseSingleOdds(m['pool2_val']?.toString()),
@@ -981,7 +1034,9 @@ class CyclingApiService {
     return null;
   }
 
-  static final _oddsPattern = RegExp(r'\(\s*([0-9]+(?:\s*-\s*[0-9]+)*)\s*\)\s*([0-9.]+)');
+  static final _oddsPattern = RegExp(
+    r'\(\s*([0-9]+(?:\s*-\s*[0-9]+)*)\s*\)\s*([0-9.]+)',
+  );
 
   /// "(4)2.1 (1)1.9" → {4: 2.1, 1: 1.9}
   Map<int, double> _parseSingleOdds(String? raw) {
@@ -1010,16 +1065,22 @@ class CyclingApiService {
   String? _checkApiError(dynamic data) {
     if (data is String) {
       if (data.contains('Unexpected errors')) return 'API 키가 유효하지 않거나 서비스 미신청';
-      if (data.contains('SERVICE_KEY_IS_NOT_REGISTERED')) return 'API 키가 등록되지 않음';
+      if (data.contains('SERVICE_KEY_IS_NOT_REGISTERED')) {
+        return 'API 키가 등록되지 않음';
+      }
       return 'API 응답 형식 오류';
     }
     if (data is! Map) return null;
     final map = data as Map<String, dynamic>;
 
-    final header = map['response']?['header'] ?? map['header'] ?? map['cmmMsgHeader'];
+    final header =
+        map['response']?['header'] ?? map['header'] ?? map['cmmMsgHeader'];
     if (header is Map) {
-      final code = header['resultCode']?.toString() ?? header['returnReasonCode']?.toString();
-      final msg = header['resultMsg'] ?? header['returnAuthMsg'] ?? header['errMsg'];
+      final code =
+          header['resultCode']?.toString() ??
+          header['returnReasonCode']?.toString();
+      final msg =
+          header['resultMsg'] ?? header['returnAuthMsg'] ?? header['errMsg'];
       if (code != null && code != '00' && code != '0') {
         return _mapErrorCode(code, msg?.toString() ?? '');
       }
@@ -1089,7 +1150,6 @@ class CyclingApiService {
     }
     return null;
   }
-
 }
 
 class _RaceAggregate {

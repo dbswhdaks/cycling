@@ -15,24 +15,69 @@ import re
 from collections import defaultdict
 
 DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-GWANGMYEONG = "광명"
+MEET_NAMES = {1: "광명", 2: "창원", 3: "부산"}
 
 
 # ─────────────────────────── 데이터 적재 ───────────────────────────
 
 
-def load_races(years: list[int]) -> list[dict]:
-    """(날짜, 경주번호)별로 출주 선수와 실제 착순을 합친 경주 목록."""
+def _load_joined(year: int, context: bool = False) -> list[dict]:
+    prefix = "joined_context" if context else "joined"
+    path = os.path.join(DATA_DIR, f"{prefix}_{year}.json")
+    if not os.path.exists(path):
+        return []
+    payload = json.load(open(path, encoding="utf-8"))
+    races = []
+    for race in payload:
+        riders = []
+        for rider in race.get("pre_race", {}).get("riders", []):
+            result = rider.get("result")
+            if not result:
+                continue
+            rank = int(result.get("rank") or 99)
+            riders.append(
+                {
+                    "row": rider.get("pre_race", {}),
+                    "name": rider.get("racer_nm", ""),
+                    "racer_no": rider.get("racer_no", ""),
+                    "back_no": int(rider.get("back_no") or 0),
+                    "rank": rank if rank > 0 else 99,
+                }
+            )
+        placed = {rider["rank"] for rider in riders}
+        if len(riders) >= 5 and {1, 2, 3} <= placed:
+            races.append(
+                {
+                    "date": race["date"],
+                    "race_no": int(race["race_no"]),
+                    "year": year,
+                    "meet": int(race["meet"]),
+                    "meet_nm": race.get("meet_nm") or MEET_NAMES.get(int(race["meet"]), ""),
+                    "odds": race.get("post_race", {}).get("odds", {}),
+                    "riders": riders,
+                }
+            )
+    return races
+
+
+def load_races(
+    years: list[int],
+    meets: set[int] | None = None,
+    context: bool = False,
+) -> list[dict]:
+    """3개 경기장의 출주 전 피처와 실제 착순을 합친 경주 목록."""
     races: list[dict] = []
 
     for year in years:
+        joined = _load_joined(year, context)
+        if joined:
+            races.extend(race for race in joined if meets is None or race["meet"] in meets)
+            continue
         organ = json.load(open(f"{DATA_DIR}/organ_{year}.json", encoding="utf-8"))
         ranks = json.load(open(f"{DATA_DIR}/rank_{year}.json", encoding="utf-8"))
 
         actual: dict[tuple[str, int], dict[str, int]] = defaultdict(dict)
         for row in ranks:
-            if (row.get("meet_nm") or "").strip() != GWANGMYEONG:
-                continue
             key = (row["race_day"], int(row["race_no"]))
             actual[key][(row.get("racer_nm") or "").strip()] = int(row.get("race_rank") or 0)
 
@@ -57,7 +102,17 @@ def load_races(years: list[int]) -> list[dict]:
             placed = {r["rank"] for r in riders}
             if len(riders) < 5 or not {1, 2, 3} <= placed:
                 continue
-            races.append({"date": date, "race_no": race_no, "year": year, "riders": riders})
+            races.append(
+                {
+                    "date": date,
+                    "race_no": race_no,
+                    "year": year,
+                    "meet": 1,
+                    "meet_nm": "광명",
+                    "odds": {},
+                    "riders": riders,
+                }
+            )
 
     races.sort(key=lambda r: (r["date"], r["race_no"]))
     return races
@@ -137,8 +192,8 @@ def tactic_of(row: dict) -> str:
 # ─────────────────────────── 기준 모델 ───────────────────────────
 
 
-def score_current(riders: list[dict]) -> list[float]:
-    """현재 앱에 적용된 PredictionEngine과 동일한 점수식."""
+def score_legacy(riders: list[dict]) -> list[float]:
+    """모델 적용 전 앱에서 사용하던 단순 점수식."""
     seonhaeng = sum(1 for r in riders if tactic_of(r["row"]) == "선행")
     scores = []
     for rider in riders:
@@ -225,7 +280,7 @@ def main() -> None:
     races = load_races([2025, 2026])
     lines = [f"평가 대상 경주: {len(races)}개 (광명, 2025~2026)", ""]
     for name, fn in [
-        ("현재 엔진", score_current),
+        ("이전 단순 엔진", score_legacy),
         ("통산 평균득점만", score_tot_avg),
         ("경기장 최근 득점만", score_area_avg),
     ]:

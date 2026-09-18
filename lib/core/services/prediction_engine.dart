@@ -7,7 +7,8 @@ import '../../models/race_entry.dart';
 ///
 /// 광명 2025~2026년 실제 경주 4,169건(출주표 + 확정 착순)으로
 /// 경주 단위 소프트맥스(조건부 로짓)를 최대우도 적합해 얻은 모델이다.
-/// 학습·검증을 연도로 분리해 교차 확인했고 어느 방향이든 1착 적중률은 59%대였다.
+/// 학습·검증을 연도로 분리해 교차 확인했고 전체 피처 모델은
+/// 2025→2026 59.9%, 2026→2025 60.3%의 1착 적중률을 기록했다.
 /// (검증 절차와 재현 스크립트는 `tool/backtest/` 참고)
 ///
 /// 점수는 **경주 안에서 표준화한 상대 우열**로만 계산한다.
@@ -16,15 +17,25 @@ import '../../models/race_entry.dart';
 class PredictionEngine {
   /// 경주 내 표준화(평균 0, 표준편차 1) 기준 가중치.
   static const Map<_Feature, double> _weights = {
-    _Feature.totalAvgScore: 0.9284,
-    _Feature.areaAvgScore: 0.3156,
-    _Feature.riderGrade: 0.1671,
-    _Feature.winRate: 0.1613,
-    _Feature.recentFinish: -0.1330,
-    _Feature.sprint: 0.1273,
-    _Feature.age: -0.1651,
-    _Feature.lineSize: 0.0566,
-    _Feature.markWinRatio: -0.2108,
+    _Feature.totalAvgScore: 0.890101,
+    _Feature.areaAvgScore: 0.304633,
+    _Feature.riderGrade: 0.157661,
+    _Feature.winRate: 0.148355,
+    _Feature.top3Rate: -0.035848,
+    _Feature.recentFinish: -0.105133,
+    _Feature.recentClass: 0.103959,
+    _Feature.recentPlace: 0.016605,
+    _Feature.outingCount: 0.016626,
+    _Feature.sprint: 0.119549,
+    _Feature.gearRatio: 0.066510,
+    _Feature.age: -0.147109,
+    _Feature.insideNumber: 0.020066,
+    _Feature.lineSize: 0.146972,
+    _Feature.lineBestScore: -0.098302,
+    _Feature.leadWinRatio: 0.028529,
+    _Feature.markWinRatio: -0.183211,
+    _Feature.breakWinRatio: 0.052105,
+    _Feature.passWinRatio: 0.053531,
   };
 
   /// 최근 성적은 최신 경주일수록 크게 반영한다.
@@ -38,9 +49,16 @@ class PredictionEngine {
   static const double _placeTemperature = 0.6;
 
   static const Map<String, double> _gradeLevels = {
-    'SS': 10, 'S1': 9, 'S2': 8, 'S3': 7,
-    'A1': 6, 'A2': 5, 'A3': 4,
-    'B1': 3, 'B2': 2, 'B3': 1,
+    'SS': 10,
+    'S1': 9,
+    'S2': 8,
+    'S3': 7,
+    'A1': 6,
+    'A2': 5,
+    'A3': 4,
+    'B1': 3,
+    'B2': 2,
+    'B3': 1,
   };
 
   static const _tacticLabels = {
@@ -129,24 +147,41 @@ class PredictionEngine {
     List<RaceEntry> all,
   ) {
     final place = entry.trainingPlace.trim();
-    final lineSize = place.isEmpty
-        ? 0
+    final lineMates = place.isEmpty
+        ? const <RaceEntry>[]
         : all
-              .where((r) => !identical(r, entry) && r.trainingPlace.trim() == place)
-              .length;
+              .where(
+                (r) => !identical(r, entry) && r.trainingPlace.trim() == place,
+              )
+              .toList();
+    final lineBestScore = lineMates.fold<double>(
+      0,
+      (best, rider) => max(best, rider.avgScore),
+    );
 
     return {
       _Feature.totalAvgScore: entry.avgScore,
-      _Feature.areaAvgScore:
-          entry.areaAvgScore > 0 ? entry.areaAvgScore : entry.avgScore,
+      _Feature.areaAvgScore: entry.areaAvgScore > 0
+          ? entry.areaAvgScore
+          : entry.avgScore,
       _Feature.riderGrade: _gradeLevel(entry),
       _Feature.winRate: entry.winRate,
+      _Feature.top3Rate: entry.top3Rate,
       // 착순은 작을수록 좋으므로 부호를 뒤집어 "클수록 좋음"으로 맞춘다.
       _Feature.recentFinish: -_weightedRecentFinish(entry),
+      _Feature.recentClass: _weightedRecentClass(entry),
+      _Feature.recentPlace: _weightedRecentPlace(entry),
+      _Feature.outingCount: entry.recentFinishes.length.toDouble(),
       _Feature.sprint: entry.sprint200m > 0 ? -entry.sprint200m : 0,
+      _Feature.gearRatio: entry.gearRatio,
       _Feature.age: entry.age.toDouble(),
-      _Feature.lineSize: lineSize.toDouble(),
+      _Feature.insideNumber: entry.lineNo <= 2 ? 1 : 0,
+      _Feature.lineSize: lineMates.length.toDouble(),
+      _Feature.lineBestScore: lineBestScore,
+      _Feature.leadWinRatio: entry.leadWinRatio,
       _Feature.markWinRatio: entry.markWinRatio,
+      _Feature.breakWinRatio: entry.breakWinRatio,
+      _Feature.passWinRatio: entry.passWinRatio,
     };
   }
 
@@ -173,6 +208,34 @@ class PredictionEngine {
     return weighted / total;
   }
 
+  /// 최근 출전 경주 등급의 지수가중 평균.
+  static double _weightedRecentClass(RaceEntry entry) {
+    if (entry.recentClasses.isEmpty) return 2.0;
+
+    var weighted = 0.0;
+    var total = 0.0;
+    for (var i = 0; i < entry.recentClasses.length; i++) {
+      final weight = pow(_recentDecay, i).toDouble();
+      weighted += entry.recentClasses[i] * weight;
+      total += weight;
+    }
+    return weighted / total;
+  }
+
+  /// 최근 출전 중 3착 이내 비율의 지수가중 평균.
+  static double _weightedRecentPlace(RaceEntry entry) {
+    if (entry.recentFinishes.isEmpty) return 0.4;
+
+    var weighted = 0.0;
+    var total = 0.0;
+    for (var i = 0; i < entry.recentFinishes.length; i++) {
+      final weight = pow(_recentDecay, i).toDouble();
+      weighted += entry.recentFinishes[i] <= 3 ? weight : 0;
+      total += weight;
+    }
+    return weighted / total;
+  }
+
   /// 경주 안에서 평균 0·표준편차 1로 맞춘다.
   /// 전원 같은 값이면(자료 없음 포함) 0이 되어 결과에 영향을 주지 않는다.
   static List<Map<_Feature, double>> _standardize(
@@ -189,8 +252,9 @@ class PredictionEngine {
       final deviation = sqrt(variance);
 
       for (var i = 0; i < raw.length; i++) {
-        result[i][feature] =
-            deviation == 0 ? 0 : (values[i] - mean) / deviation;
+        result[i][feature] = deviation == 0
+            ? 0
+            : (values[i] - mean) / deviation;
       }
     }
 
@@ -231,7 +295,8 @@ class PredictionEngine {
         if (second == first || second == target) continue;
         final afterSecond = afterFirst - probs[second];
         if (afterSecond <= 0) continue;
-        total += probs[first] *
+        total +=
+            probs[first] *
             (probs[second] / afterFirst) *
             (probs[target] / afterSecond);
       }
@@ -378,9 +443,19 @@ enum _Feature {
   areaAvgScore,
   riderGrade,
   winRate,
+  top3Rate,
   recentFinish,
+  recentClass,
+  recentPlace,
+  outingCount,
   sprint,
+  gearRatio,
   age,
+  insideNumber,
   lineSize,
+  lineBestScore,
+  leadWinRatio,
   markWinRatio,
+  breakWinRatio,
+  passWinRatio,
 }

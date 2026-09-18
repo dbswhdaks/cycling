@@ -3,6 +3,8 @@ import 'package:flutter/foundation.dart';
 import 'package:html/dom.dart' as dom;
 import 'package:html/parser.dart' as html_parser;
 
+import '../../models/odds.dart';
+
 /// KCYCLE 공식 사이트에서 경주별 상세 착순표를 수집한다.
 ///
 /// 공공데이터 순위 API는 선수명과 착순만 제공해 배번·주행시간·착차를 알 수 없다.
@@ -14,6 +16,8 @@ class KcycleResultService {
   KcycleResultService();
 
   static const String _baseUrl = 'https://www.kcycle.or.kr/race/result/general';
+  static const String _decisionOddsUrl =
+      'https://www.kcycle.or.kr/race/dividendrate/decision';
 
   /// 앱 경기장 코드 → KCYCLE 경기장 코드.
   ///
@@ -36,6 +40,7 @@ class KcycleResultService {
   );
 
   final Map<String, List<Map<String, dynamic>>> _cache = {};
+  final Map<String, Odds> _oddsCache = {};
 
   /// 경주별 상세 착순을 반환. 실패하면 빈 목록.
   Future<List<Map<String, dynamic>>> fetchRankDetails({
@@ -71,7 +76,119 @@ class KcycleResultService {
     }
   }
 
-  void clearCache() => _cache.clear();
+  /// KCYCLE 공식 확정배당률을 반환한다. 공개 전이거나 실패하면 빈 배당이다.
+  Future<Odds> fetchDecisionOdds({
+    required int year,
+    required int round,
+    required int dayOrd,
+    required int meet,
+    required int raceNo,
+  }) async {
+    if (round <= 0 || dayOrd <= 0) return const Odds();
+
+    final meetCd = meetCodes[meet];
+    if (meetCd == null) return const Odds();
+
+    final raceNoStr = raceNo.toString().padLeft(2, '0');
+    final key = '$year/$round/$dayOrd/$meetCd/$raceNoStr';
+    final cached = _oddsCache[key];
+    if (cached != null) return cached;
+
+    try {
+      final res = await _dio.get('$_decisionOddsUrl/$key');
+      if (res.statusCode != 200) return const Odds();
+
+      final odds = parseDecisionOdds(res.data.toString());
+      if (odds.isNotEmpty) _oddsCache[key] = odds;
+
+      if (kDebugMode) {
+        debugPrint('[KCYCLE] $key: 확정배당 ${odds.isNotEmpty ? '수집' : '미공개'}');
+      }
+      return odds;
+    } catch (e) {
+      if (kDebugMode) debugPrint('[KCYCLE] $key 확정배당 실패: $e');
+      return const Odds();
+    }
+  }
+
+  void clearCache() {
+    _cache.clear();
+    _oddsCache.clear();
+  }
+
+  /// KCYCLE 확정배당 표를 승식별 [Odds]로 변환한다.
+  @visibleForTesting
+  Odds parseDecisionOdds(String htmlString) {
+    final document = html_parser.parse(htmlString);
+    final table = document.querySelectorAll('table').where((candidate) {
+      final text = _clean(candidate.text);
+      return text.contains('승자') &&
+          text.contains('배당률') &&
+          text.contains('삼쌍승');
+    }).firstOrNull;
+    if (table == null) return const Odds();
+
+    final rows = table.querySelectorAll('tr');
+    if (rows.length < 3) return const Odds();
+
+    List<String> cells(dom.Element row) => row
+        .querySelectorAll('th, td')
+        .map((cell) => _clean(cell.text))
+        .toList();
+
+    final types = cells(rows[0]);
+    final winners = cells(rows[1]);
+    final values = cells(rows[2]);
+    final count = [
+      types.length,
+      winners.length,
+      values.length,
+    ].reduce((a, b) => a < b ? a : b);
+
+    final win = <int, double>{};
+    final place = <int, double>{};
+    final exacta = <String, double>{};
+    final quinella = <String, double>{};
+    final trio = <String, double>{};
+    final exactaTrio = <String, double>{};
+    final trifecta = <String, double>{};
+
+    for (var i = 1; i < count; i++) {
+      final numbers = RegExp(
+        r'\d+',
+      ).allMatches(winners[i]).map((match) => match.group(0)!).toList();
+      final odds = double.tryParse(values[i].replaceAll(',', ''));
+      if (numbers.isEmpty || odds == null || odds <= 0) continue;
+
+      final key = numbers.join('-');
+      switch (types[i]) {
+        case '단승':
+          win[int.parse(numbers.first)] = odds;
+        case '연승':
+          place[int.parse(numbers.first)] = odds;
+        case '쌍승':
+          exacta[key] = odds;
+        case '복승':
+          quinella[key] = odds;
+        case '삼복승':
+          trio[key] = odds;
+        case '쌍복승':
+          exactaTrio[key] = odds;
+        case '삼쌍승':
+          trifecta[key] = odds;
+      }
+    }
+
+    return Odds(
+      win: win,
+      place: place,
+      exacta: exacta,
+      quinella: quinella,
+      trio: trio,
+      exactaTrio: exactaTrio,
+      trifecta: trifecta,
+    );
+  }
 
   /// 착차 표를 파싱한다.
   ///
@@ -99,7 +216,9 @@ class KcycleResultService {
 
       String cell(int i) => i < cells.length ? _clean(cells[i].text) : '';
 
-      final backNo = int.tryParse(_clean(header.querySelector('.sign')?.text ?? ''));
+      final backNo = int.tryParse(
+        _clean(header.querySelector('.sign')?.text ?? ''),
+      );
       final rank = int.tryParse(cell(0));
       if (backNo == null || rank == null) continue;
 

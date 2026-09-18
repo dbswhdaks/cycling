@@ -21,8 +21,8 @@ FIXTURE = os.path.join(
 # 예측 엔진이 실제로 사용하는 필드만 남긴다.
 KEEP = [
     "back_no", "racer_nm", "racer_grd_cd", "racer_grd_cur_cd",
-    "tot_tms_avg_scr", "area_tms3_avg_scr", "win_rate",
-    "rec_200m_scr", "racer_age", "trng_plc_nm",
+    "tot_tms_avg_scr", "area_tms3_avg_scr", "win_rate", "high_3_rate",
+    "rec_200m_scr", "gear_rate", "racer_age", "trng_plc_nm",
     "run_day_tcnt", "pre_win_cnt", "brk_win_cnt", "mrk_win_cnt", "pas_win_cnt",
 ] + [f"bf{tms}_day{day}_rank" for tms in (1, 2, 3) for day in (1, 2, 3)]
 

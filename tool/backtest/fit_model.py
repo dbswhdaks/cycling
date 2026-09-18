@@ -27,7 +27,7 @@ from evaluate import (
     recent_outings,
     report,
     score_area_avg,
-    score_current,
+    score_legacy,
     score_tot_avg,
 )
 
@@ -189,7 +189,7 @@ def main() -> None:
         lines.append(f"  {FEATURES[i]:14s} {weights[i]:+.3f}")
 
     lines += ["", "적중률 (검증: 2026년 광명)"]
-    lines.append(report("현재 엔진", evaluate(test, score_current)))
+    lines.append(report("이전 단순 엔진", evaluate(test, score_legacy)))
     lines.append(report("통산 평균득점만", evaluate(test, score_tot_avg)))
     lines.append(report("경기장 최근 득점만", evaluate(test, score_area_avg)))
     lines.append(report("전체 피처 모델", evaluate(test, make_scorer(weights, every))))

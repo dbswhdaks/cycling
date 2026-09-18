@@ -12,13 +12,15 @@ import 'package:cycling/models/race_entry.dart';
 /// 픽스처는 `tool/backtest/export_fixture.py`가 공공데이터 API 원본 필드 그대로
 /// 뽑아둔 것이라, 출주표 파싱부터 예측까지 실제 경로를 그대로 지난다.
 void main() {
-  final races = (jsonDecode(
-    File('test/fixtures/backtest_races.json').readAsStringSync(),
-  ) as List).cast<Map<String, dynamic>>();
+  final races =
+      (jsonDecode(File('test/fixtures/backtest_races.json').readAsStringSync())
+              as List)
+          .cast<Map<String, dynamic>>();
 
   final api = CyclingApiService();
 
-  List<RaceEntry> entriesOf(Map<String, dynamic> race) => api.buildEntriesFromItems(
+  List<RaceEntry> entriesOf(Map<String, dynamic> race) =>
+      api.buildEntriesFromItems(
         (race['entries'] as List)
             .map((e) => Map<String, dynamic>.from(e as Map))
             .toList(),
@@ -39,14 +41,26 @@ void main() {
     expect(entries.every((e) => e.riderGrade.isNotEmpty), isTrue);
     expect(entries.any((e) => e.recentFinishes.isNotEmpty), isTrue);
     expect(entries.any((e) => e.sprint200m > 0), isTrue);
+    expect(entries.any((e) => e.top3Rate > 0), isTrue);
+    expect(entries.any((e) => e.gearRatio > 0), isTrue);
     expect(entries.any((e) => e.trainingPlace.isNotEmpty), isTrue);
+    expect(
+      entries.any(
+        (e) =>
+            e.leadWinRatio > 0 ||
+            e.markWinRatio > 0 ||
+            e.breakWinRatio > 0 ||
+            e.passWinRatio > 0,
+      ),
+      isTrue,
+    );
     expect(
       entries.first.recentFinishes.length,
       entries.first.recentClasses.length,
     );
   });
 
-  test('1착 적중률이 백테스트 수준(55% 이상)을 유지한다', () {
+  test('1착 적중률이 백테스트 수준(57% 이상)을 유지한다', () {
     var win = 0;
     var show = 0;
     var trio = 0;
@@ -64,8 +78,8 @@ void main() {
       }
     }
 
-    // 같은 모델을 파이썬 백테스트로 돌린 결과: 단승 57.0% · 복승 84.0% · 삼복승 23.5%
-    expect(win / races.length, greaterThanOrEqualTo(0.55));
+    // 전체 피처 모델의 고정 픽스처 결과: 단승 58.0% · 복승 84.0% · 삼복승 22.5%
+    expect(win / races.length, greaterThanOrEqualTo(0.57));
     expect(show / races.length, greaterThanOrEqualTo(0.80));
     expect(trio / races.length, greaterThanOrEqualTo(0.20));
   });
@@ -108,9 +122,27 @@ void main() {
   test('자료가 통산 득점뿐이어도 득점 순으로 예측한다', () {
     // 창원·부산은 크롤링 자료라 평균득점과 등급만 들어온다.
     const entries = [
-      RaceEntry(lineNo: 1, riderName: '가', riderId: '1', grade: 'A3', avgScore: 88.0),
-      RaceEntry(lineNo: 2, riderName: '나', riderId: '2', grade: 'A1', avgScore: 95.0),
-      RaceEntry(lineNo: 3, riderName: '다', riderId: '3', grade: 'A2', avgScore: 91.0),
+      RaceEntry(
+        lineNo: 1,
+        riderName: '가',
+        riderId: '1',
+        grade: 'A3',
+        avgScore: 88.0,
+      ),
+      RaceEntry(
+        lineNo: 2,
+        riderName: '나',
+        riderId: '2',
+        grade: 'A1',
+        avgScore: 95.0,
+      ),
+      RaceEntry(
+        lineNo: 3,
+        riderName: '다',
+        riderId: '3',
+        grade: 'A2',
+        avgScore: 91.0,
+      ),
     ];
 
     final prediction = PredictionEngine.predict(entries);

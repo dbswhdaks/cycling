@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../../../core/constants/api_constants.dart';
+import '../../../core/services/prediction_engine.dart';
 import '../../../models/race_entry.dart';
 import '../../../models/race_result.dart';
 import '../../../models/odds.dart';
@@ -225,8 +226,6 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
                               : _buildErrorBox(context, '결과를 불러올 수 없습니다'),
                         ),
                       ),
-                    const SizedBox(height: 24),
-                    _buildDisclaimer(context),
                     const SizedBox(height: 24),
                   ],
                 ),
@@ -457,7 +456,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                '새로고침 ${_refreshCount}회 완료',
+                '새로고침 $_refreshCount회 완료',
                 style: const TextStyle(
                   color: Color(0xFF3B82F6),
                   fontSize: 11,
@@ -969,7 +968,10 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
   }
 
   Widget _buildRankRow(ThemeData theme, Map<String, dynamic> rank, int index) {
-    final rankNum = rank['rank'] as int? ?? (index + 1);
+    final rawRank = rank['rank'];
+    final rankNum = rawRank is int
+        ? rawRank
+        : int.tryParse(rawRank?.toString() ?? '') ?? (index + 1);
     final backNo = rank['back_no'] ?? '';
     final name = rank['racer_nm']?.toString() ?? '';
     final grade = rank['racer_grd_cd']?.toString() ?? '';
@@ -977,9 +979,10 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     final diff = rank['arrival_diff']?.toString() ?? '';
 
     const podiumColors = [Color(0xFFFBBF24), Color(0xFFA3A3A3), Color(0xFFCD7F32)];
-    final isTop3 = rankNum <= 3;
+    final isTop3 = rankNum >= 1 && rankNum <= 3;
     final rankColor = isTop3 ? podiumColors[rankNum - 1] : theme.colorScheme.onSurface.withValues(alpha: 0.4);
     final isDark = theme.brightness == Brightness.dark;
+    final rankLabel = rankNum > 0 ? '$rankNum' : '-';
 
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
@@ -1007,7 +1010,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
                     ),
                     alignment: Alignment.center,
                     child: Text(
-                      '$rankNum',
+                      rankLabel,
                       style: TextStyle(
                         color: rankColor,
                         fontWeight: FontWeight.w800,
@@ -1016,7 +1019,7 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
                     ),
                   )
                 : Text(
-                    '$rankNum',
+                    rankLabel,
                     style: TextStyle(
                       color: rankColor,
                       fontWeight: FontWeight.w600,
@@ -1112,16 +1115,9 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
     final typed = entries.cast<RaceEntry>();
     if (typed.isEmpty) return [];
 
-    const gradeScores = {'S': 10.0, 'A1': 8.5, 'A2': 7.0, 'B1': 5.5, 'B2': 4.0, 'B3': 2.5};
-    final scored = typed.map((e) {
-      final g = gradeScores[e.grade] ?? 4.0;
-      final a = e.avgScore.clamp(0, 10).toDouble();
-      final r = e.recent3Wins * 2.0;
-      return (entry: e, score: g * 3.0 + a * 2.5 + r);
-    }).toList()
-      ..sort((a, b) => b.score.compareTo(a.score));
-
-    return scored.take(3).map((s) => (lineNo: s.entry.lineNo, name: s.entry.riderName)).toList();
+    return PredictionEngine.predict(typed).rankings.take(3).map((rider) {
+      return (lineNo: rider.lineNo, name: rider.riderName);
+    }).toList();
   }
 
   Widget _buildComparisonSection(
@@ -1552,38 +1548,6 @@ class _RaceResultScreenState extends ConsumerState<RaceResultScreen> {
           ),
         ),
       ],
-    );
-  }
-
-  // ─── 안내 ───
-
-  Widget _buildDisclaimer(BuildContext context) {
-    final theme = Theme.of(context);
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: const Color(0xFF3B82F6).withValues(alpha: 0.06),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFF3B82F6).withValues(alpha: 0.15)),
-      ),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Icon(Icons.info_outline_rounded, color: Color(0xFF3B82F6), size: 18),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              '광명은 공공데이터포털(국민체육진흥공단) 경주결과 API와 경륜 공식 사이트(KCYCLE)를, '
-              '창원·부산은 창원레포츠파크 경주결과를 사용합니다. '
-              '착순과 확정 배당은 언제나 같은 자료에서 함께 가져옵니다.',
-              style: theme.textTheme.bodySmall?.copyWith(
-                color: const Color(0xFF3B82F6).withValues(alpha: 0.8),
-                height: 1.4,
-              ),
-            ),
-          ),
-        ],
-      ),
     );
   }
 

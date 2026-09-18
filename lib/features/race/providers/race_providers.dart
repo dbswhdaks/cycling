@@ -120,8 +120,9 @@ final monthRaceDatesProvider =
       );
 
       if (result.isSuccess && result.data != null && result.data!.isNotEmpty) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint('[Provider] monthRaceDates: API ${result.data!.length}건');
+        }
         return result.data!;
       }
 
@@ -131,10 +132,11 @@ final monthRaceDatesProvider =
         month: params.month,
       );
       if (cached.isNotEmpty) {
-        if (kDebugMode)
+        if (kDebugMode) {
           debugPrint(
             '[Provider] monthRaceDates: Supabase 캐시 ${cached.length}건',
           );
+        }
         return cached;
       }
 
@@ -309,6 +311,28 @@ Set<String> _normalizeNames(Iterable<String> names) => names
     .where((n) => n.isNotEmpty)
     .toSet();
 
+/// 공식 확정배당의 순서형 승식에서 실제 1·2·3착 배번을 복원한다.
+List<int> _finishOrderFromOdds(Odds odds) {
+  List<int> parse(String key) =>
+      key.split('-').map(int.tryParse).whereType<int>().toList();
+
+  if (odds.trifecta.isNotEmpty) {
+    return parse(odds.trifecta.keys.first);
+  }
+  if (odds.exactaTrio.isNotEmpty) {
+    return parse(odds.exactaTrio.keys.first);
+  }
+  if (odds.exacta.isNotEmpty && odds.trio.isNotEmpty) {
+    final firstTwo = parse(odds.exacta.keys.first);
+    final topThree = parse(odds.trio.keys.first);
+    if (firstTwo.length == 2 && topThree.length == 3) {
+      final third = topThree.where((no) => !firstTwo.contains(no)).firstOrNull;
+      if (third != null) return [...firstTwo, third];
+    }
+  }
+  return const [];
+}
+
 /// 경주 결과 - 착순과 확정 배당을 함께 담은 단일 소스
 ///
 /// 출주표가 실제 API 데이터일 때만 선수명 교차 검증을 수행한다.
@@ -329,6 +353,7 @@ final raceResultProvider =
       final entryNames = entries.fromApi
           ? _normalizeNames(entries.data.map((e) => e.riderName))
           : <String>{};
+      RaceResult? apiResultWithoutPayoff;
 
       final result = await api.fetchRaceResult(
         meet: params.venue,
@@ -343,11 +368,104 @@ final raceResultProvider =
           final r = matched.first;
           final names = _normalizeNames({r.first, r.second, r.third});
           if (entryNames.isEmpty || names.intersection(entryNames).isNotEmpty) {
-            return r;
-          }
-          if (kDebugMode) {
+            if (r.payoff.isNotEmpty) return r;
+
+            final officialOdds = await ref
+                .watch(kcycleResultServiceProvider)
+                .fetchDecisionOdds(
+                  year: int.parse(params.date.substring(0, 4)),
+                  round: r.round,
+                  dayOrd: r.dayOrd,
+                  meet: params.venue,
+                  raceNo: params.raceNo,
+                );
+            if (officialOdds.isNotEmpty) {
+              return RaceResult(
+                raceNo: r.raceNo,
+                first: r.first,
+                firstNo: r.firstNo,
+                second: r.second,
+                secondNo: r.secondNo,
+                third: r.third,
+                thirdNo: r.thirdNo,
+                payoff: officialOdds,
+                round: r.round,
+                dayOrd: r.dayOrd,
+              );
+            }
+            apiResultWithoutPayoff = r;
+          } else if (kDebugMode) {
             debugPrint(
               '[Provider] raceResult: API 결과 $names ≠ 출주표 $entryNames',
+            );
+          }
+        }
+      }
+
+      // 광명 경주결과 API가 늦게 갱신되더라도 순위 API에는 착순·회차가 먼저
+      // 공개되는 경우가 있다. 이때 KCYCLE 공식 확정배당과 합쳐 결과를 만든다.
+      if (params.venue == 1) {
+        final rankResult = await api.fetchRaceRank(
+          meet: params.venue,
+          date: params.date,
+          rcNo: params.raceNo,
+        );
+        final rankRows =
+            rankResult.data ?? const <Map<String, dynamic>>[];
+        if (rankRows.isNotEmpty) {
+          final backNoByName = {
+            for (final entry in entries.data)
+              _nameKey(entry.riderName): entry.lineNo,
+          };
+          final nameByBackNo = {
+            for (final entry in entries.data) entry.lineNo: entry.riderName,
+          };
+          int backNo(Map<String, dynamic> row) =>
+              backNoByName[_nameKey(row['racer_nm']?.toString() ?? '')] ?? 0;
+          final round = rankRows.first['round'] as int? ?? 0;
+          final dayOrd = rankRows.first['day_ord'] as int? ?? 0;
+          final officialOdds = await ref
+              .watch(kcycleResultServiceProvider)
+              .fetchDecisionOdds(
+                year: int.parse(params.date.substring(0, 4)),
+                round: round,
+                dayOrd: dayOrd,
+                meet: params.venue,
+                raceNo: params.raceNo,
+              );
+
+          final officialOrder = _finishOrderFromOdds(officialOdds);
+          if (officialOrder.length >= 3) {
+            return RaceResult(
+              raceNo: params.raceNo,
+              first: nameByBackNo[officialOrder[0]] ?? '',
+              firstNo: officialOrder[0],
+              second: nameByBackNo[officialOrder[1]] ?? '',
+              secondNo: officialOrder[1],
+              third: nameByBackNo[officialOrder[2]] ?? '',
+              thirdNo: officialOrder[2],
+              payoff: officialOdds,
+              round: round,
+              dayOrd: dayOrd,
+            );
+          }
+
+          final ranked = rankRows
+              .where((row) => (row['rank'] as int? ?? 0) > 0)
+              .take(3)
+              .toList();
+          if (ranked.length == 3) {
+            return RaceResult(
+              raceNo: params.raceNo,
+              first: ranked[0]['racer_nm']?.toString() ?? '',
+              firstNo: backNo(ranked[0]),
+              second: ranked[1]['racer_nm']?.toString() ?? '',
+              secondNo: backNo(ranked[1]),
+              third: ranked[2]['racer_nm']?.toString() ?? '',
+              thirdNo: backNo(ranked[2]),
+              payoff: officialOdds,
+              round: round,
+              dayOrd: dayOrd,
             );
           }
         }
@@ -360,6 +478,8 @@ final raceResultProvider =
         }
         return _raceResultFrom(lepopark);
       }
+
+      if (apiResultWithoutPayoff != null) return apiResultWithoutPayoff;
 
       if (_isRaceDateNotFinished(params.date)) {
         throw const RaceNotYetException();

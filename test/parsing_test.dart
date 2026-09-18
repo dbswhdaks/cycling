@@ -14,8 +14,9 @@ String _fixture(String name) => File('test/fixtures/$name').readAsStringSync();
 void main() {
   group('KCYCLE 상세 착순 파싱', () {
     test('광명 16R - 배번·착차·주행시간·승부수', () {
-      final rows = KcycleResultService()
-          .parseRankTable(_fixture('kcycle_result_gwangmyeong_16r.html'));
+      final rows = KcycleResultService().parseRankTable(
+        _fixture('kcycle_result_gwangmyeong_16r.html'),
+      );
 
       expect(rows.length, 7);
       expect(rows.map((r) => r['rank']), [1, 2, 3, 4, 5, 6, 7]);
@@ -35,8 +36,9 @@ void main() {
     });
 
     test('창원 3R - 동착은 같은 순위로 파싱된다', () {
-      final rows = KcycleResultService()
-          .parseRankTable(_fixture('kcycle_result_changwon_3r.html'));
+      final rows = KcycleResultService().parseRankTable(
+        _fixture('kcycle_result_changwon_3r.html'),
+      );
 
       expect(rows.length, 7);
       expect(rows.map((r) => r['rank']).take(3), [1, 1, 3]);
@@ -57,32 +59,95 @@ void main() {
       expect(KcycleResultService.meetCodes[2], '002');
       expect(KcycleResultService.meetCodes[3], '004');
     });
+
+    test('공식 확정배당 표에서 일곱 승식을 파싱한다', () {
+      const html = '''
+        <table>
+          <thead>
+            <tr>
+              <th>승식</th><th>단승</th><th>연승</th><th>연승</th>
+              <th>쌍승</th><th>복승</th><th>삼복승</th>
+              <th>쌍복승</th><th>삼쌍승</th>
+            </tr>
+            <tr>
+              <th>승자</th><th>2</th><th>2</th><th>6</th>
+              <th>2-6</th><th>2-6</th><th>2-6-5</th>
+              <th>2-6-5</th><th>2-6-5</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th>배당률(%)</th><td>1.0</td><td>1.0</td><td>2.2</td>
+              <td>2.4</td><td>2.5</td><td>6.8</td>
+              <td>6.8</td><td>11.1</td>
+            </tr>
+          </tbody>
+        </table>
+      ''';
+
+      final payoff = KcycleResultService().parseDecisionOdds(html);
+
+      expect(payoff.win, {2: 1.0});
+      expect(payoff.place, {2: 1.0, 6: 2.2});
+      expect(payoff.exacta, {'2-6': 2.4});
+      expect(payoff.quinella, {'2-6': 2.5});
+      expect(payoff.trio, {'2-6-5': 6.8});
+      expect(payoff.exactaTrio, {'2-6-5': 6.8});
+      expect(payoff.trifecta, {'2-6-5': 11.1});
+    });
+
+    test('확정배당 표가 없으면 빈 배당을 반환한다', () {
+      expect(
+        KcycleResultService().parseDecisionOdds('<html></html>').isEmpty,
+        isTrue,
+      );
+    });
   });
 
   group('lepopark 출주표 파싱', () {
     test('창원 경주의 배번 순서와 등급', () {
-      final parsed = VenueScrapingService()
-          .parseLepoparkHtml(_fixture('lepopark_entrant.html'), '20260830');
+      final parsed = VenueScrapingService().parseLepoparkHtml(
+        _fixture('lepopark_entrant.html'),
+        '20260830',
+      );
 
       final changwon = parsed[2]!;
       expect(changwon, isNotEmpty);
 
       final race3 = changwon.where((m) => m['race_no'] == '3').toList();
       expect(race3.length, 7);
-      expect(race3.map((m) => m['back_no']), ['1', '2', '3', '4', '5', '6', '7']);
-      expect(
-        race3.map((m) => m['racer_nm']),
-        ['송정욱', '최근영', '김홍기', '문인재', '신동인', '김환윤', '김용진'],
-      );
+      expect(race3.map((m) => m['back_no']), [
+        '1',
+        '2',
+        '3',
+        '4',
+        '5',
+        '6',
+        '7',
+      ]);
+      expect(race3.map((m) => m['racer_nm']), [
+        '송정욱',
+        '최근영',
+        '김홍기',
+        '문인재',
+        '신동인',
+        '김환윤',
+        '김용진',
+      ]);
       expect(race3.first['race_ymd'], '2026.08.30');
       expect(race3.first['race_grd'], '우수');
       expect(race3.first['dptre_tm'], '11:46');
-      expect(race3.every((m) => (m['racer_grd_cd'] as String).isNotEmpty), isTrue);
+      expect(
+        race3.every((m) => (m['racer_grd_cd'] as String).isNotEmpty),
+        isTrue,
+      );
     });
 
     test('예측에 쓰는 지표까지 채운다', () {
-      final parsed = VenueScrapingService()
-          .parseLepoparkHtml(_fixture('lepopark_entrant.html'), '20260830');
+      final parsed = VenueScrapingService().parseLepoparkHtml(
+        _fixture('lepopark_entrant.html'),
+        '20260830',
+      );
 
       final song = parsed[2]!.firstWhere((m) => m['racer_nm'] == '송정욱');
 
@@ -104,10 +169,11 @@ void main() {
     });
 
     test('크롤링 자료도 출주표 파싱에서 예측 항목으로 이어진다', () {
-      final parsed = VenueScrapingService()
-          .parseLepoparkHtml(_fixture('lepopark_entrant.html'), '20260830');
-      final race3 =
-          parsed[2]!.where((m) => m['race_no'] == '3').toList();
+      final parsed = VenueScrapingService().parseLepoparkHtml(
+        _fixture('lepopark_entrant.html'),
+        '20260830',
+      );
+      final race3 = parsed[2]!.where((m) => m['race_no'] == '3').toList();
 
       final entries = CyclingApiService().buildEntriesFromItems(race3);
       final song = entries.firstWhere((e) => e.riderName == '송정욱');
@@ -128,8 +194,9 @@ void main() {
   });
 
   group('lepopark 경주결과 파싱', () {
-    final parsed = LepoparkResultService()
-        .parseResultPage(_fixture('lepopark_result.html'));
+    final parsed = LepoparkResultService().parseResultPage(
+      _fixture('lepopark_result.html'),
+    );
 
     test('경기장별로 경주가 갈린다', () {
       expect(parsed[2]?.keys, [6]);

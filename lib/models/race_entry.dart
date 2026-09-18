@@ -22,6 +22,9 @@ class RaceEntry {
   /// 승률(%). 자료가 없으면 0.
   final double winRate;
 
+  /// 삼연대율(%). 자료가 없으면 0.
+  final double top3Rate;
+
   /// 최근 착순(최신순, 1~9). 결장·미상은 제외한다.
   final List<int> recentFinishes;
 
@@ -32,6 +35,9 @@ class RaceEntry {
   /// 200m 기록(초). 0이면 자료 없음.
   final double sprint200m;
 
+  /// 기어배수. 자료가 없으면 0.
+  final double gearRatio;
+
   /// 나이. 0이면 자료 없음.
   final int age;
 
@@ -40,6 +46,11 @@ class RaceEntry {
 
   /// 마크 승 비율(마크 승수 / 출주 일수).
   final double markWinRatio;
+
+  /// 전법별 승 비율(각 전법 승수 / 출주 일수).
+  final double leadWinRatio;
+  final double breakWinRatio;
+  final double passWinRatio;
 
   const RaceEntry({
     required this.lineNo,
@@ -52,11 +63,16 @@ class RaceEntry {
     this.riderGrade = '',
     this.areaAvgScore = 0,
     this.winRate = 0,
+    this.top3Rate = 0,
     this.recentFinishes = const [],
     this.recentClasses = const [],
     this.sprint200m = 0,
+    this.gearRatio = 0,
     this.age = 0,
     this.trainingPlace = '',
     this.markWinRatio = 0,
+    this.leadWinRatio = 0,
+    this.breakWinRatio = 0,
+    this.passWinRatio = 0,
   });
 }

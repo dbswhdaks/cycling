@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import '../../../core/constants/api_constants.dart';
 import '../../../core/constants/iap_constants.dart';
+import '../../../core/services/prediction_engine.dart';
 import '../../../models/race_entry.dart';
 import '../../../models/odds.dart';
 import '../providers/race_providers.dart';
@@ -175,8 +176,8 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
           const SizedBox(height: 12),
           entriesAsync.when(
             data: (result) {
-              final entries = (result is DataWithSource ? result.data : result)
-                  as List;
+              final entries =
+                  (result is DataWithSource ? result.data : result) as List;
               if (entries.isEmpty) {
                 return _buildEmptyNotice(theme, '출주표가 아직 공개되지 않았습니다.');
               }
@@ -210,10 +211,7 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
             context,
             icon: Icons.info_outline_rounded,
             title: '경주 정보',
-            items: [
-              '출주표: 공공데이터 API·경륜 공식 사이트',
-              '확정 배당: 경주 종료 후 공개',
-            ],
+            items: ['출주표: 공공데이터 API·경륜 공식 사이트', '확정 배당: 경주 종료 후 공개'],
           ),
           const SizedBox(height: 18),
           Center(child: _buildResultActionButton(context)),
@@ -448,20 +446,15 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
         final typed = entries.cast<RaceEntry>();
         if (typed.isEmpty) return const SizedBox.shrink();
 
-        final scored = typed.map((e) {
-          const gradeScores = {
-            'S': 10.0,
-            'A1': 8.5,
-            'A2': 7.0,
-            'B1': 5.5,
-            'B2': 4.0,
-            'B3': 2.5,
-          };
-          final g = gradeScores[e.grade] ?? 4.0;
-          final a = e.avgScore.clamp(0, 10).toDouble();
-          final r = e.recent3Wins * 2.0;
-          return (entry: e, score: g * 3.0 + a * 2.5 + r);
-        }).toList()..sort((a, b) => b.score.compareTo(a.score));
+        final entriesByNumber = {
+          for (final entry in typed) entry.lineNo: entry,
+        };
+        final prediction = PredictionEngine.predict(typed);
+        final scored = [
+          for (final rider in prediction.rankings)
+            if (entriesByNumber[rider.lineNo] case final entry?)
+              (entry: entry, score: rider.winProb),
+        ];
 
         Odds? odds;
         final oddsVal = oddsAsync.valueOrNull;
@@ -488,7 +481,7 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                 ),
                 const Spacer(),
                 Text(
-                  '등급·성적·배당 종합',
+                  '19개 출주 지표 종합',
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: theme.colorScheme.onSurface.withValues(alpha: 0.5),
                   ),
@@ -611,7 +604,7 @@ class _RaceDetailScreenState extends ConsumerState<RaceDetailScreen>
                           ),
                           const SizedBox(width: 8),
                           Text(
-                            '평균 ${e.avgScore.toStringAsFixed(1)}',
+                            '승률 ${score.toStringAsFixed(1)}%',
                             style: theme.textTheme.bodySmall?.copyWith(
                               color: theme.colorScheme.onSurface.withValues(
                                 alpha: 0.6,
